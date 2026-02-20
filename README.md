@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/streamlinelabs/streamline-go-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/streamlinelabs/streamline-go-sdk/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.21%2B-cyan.svg)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.22%2B-cyan.svg)](https://go.dev/)
 [![Docs](https://img.shields.io/badge/docs-streamlinelabs.dev-blue.svg)](https://streamlinelabs.dev/docs/sdks/go)
 
 Official Go client for [Streamline](https://github.com/streamlinelabs/streamline-go-sdk) - The Redis of Streaming.
