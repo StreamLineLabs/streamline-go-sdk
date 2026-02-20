@@ -1,0 +1,51 @@
+# golangci-lint configuration for Streamline Go SDK
+# See: https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  go: "1.21"
+
+linters:
+  enable:
+    - errcheck      # Check for unchecked errors
+    - gosimple      # Simplify code suggestions
+    - govet         # Report suspicious constructs
+    - ineffassign   # Detect unused variable assignments
+    - staticcheck   # Comprehensive static analysis
+    - unused        # Find unused code
+    - gosec         # Security-oriented linting
+    - gocritic      # Opinionated style and performance checks
+    - gofmt         # Check code formatting
+    - goimports     # Check import ordering
+    - misspell      # Find common misspellings
+    - unconvert     # Remove unnecessary type conversions
+    - unparam       # Find unused function parameters
+    - prealloc      # Suggest preallocations
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  gosec:
+    excludes:
+      - G104  # Unhandled errors (covered by errcheck)
+  gocritic:
+    enabled-tags:
+      - diagnostic
+      - performance
+      - style
+  govet:
+    enable-all: true
+    disable:
+      - fieldalignment  # Too noisy for SDK code
+
+issues:
+  exclude-use-default: false
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - gosec
+        - errcheck
+        - gocritic
