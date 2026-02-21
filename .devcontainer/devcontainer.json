@@ -1,0 +1,41 @@
+{
+  "name": "Streamline Go SDK",
+  "image": "mcr.microsoft.com/devcontainers/go:1.22",
+
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {},
+    "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "golang.go",
+        "EditorConfig.EditorConfig",
+        "usernamehw.errorlens",
+        "eamodio.gitlens",
+        "GitHub.copilot"
+      ],
+      "settings": {
+        "go.lintTool": "golangci-lint",
+        "go.lintFlags": ["--fast"],
+        "editor.formatOnSave": true,
+        "[go]": {
+          "editor.defaultFormatter": "golang.go"
+        }
+      }
+    }
+  },
+
+  "postCreateCommand": "go mod download",
+
+  "forwardPorts": [9092],
+  "portsAttributes": {
+    "9092": {
+      "label": "Streamline Server",
+      "onAutoForward": "notify"
+    }
+  },
+
+  "remoteUser": "vscode"
+}
