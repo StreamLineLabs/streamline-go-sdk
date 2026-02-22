@@ -1,6 +1,7 @@
 # Streamline Go SDK
 
 [![CI](https://github.com/streamlinelabs/streamline-go-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/streamlinelabs/streamline-go-sdk/actions/workflows/ci.yml)
+[![codecov](https://img.shields.io/codecov/c/github/streamlinelabs/streamline-go-sdk?style=flat-square)](https://codecov.io/gh/streamlinelabs/streamline-go-sdk)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.22%2B-cyan.svg)](https://go.dev/)
 [![Docs](https://img.shields.io/badge/docs-streamlinelabs.dev-blue.svg)](https://streamlinelabs.dev/docs/sdks/go)
