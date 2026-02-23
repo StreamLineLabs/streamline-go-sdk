@@ -26,6 +26,9 @@ package streamline
 import (
 	"context"
 	"fmt"
+	"io"
+	"net/http"
+	"strings"
 	"time"
 
 	"github.com/testcontainers/testcontainers-go"
@@ -288,4 +291,195 @@ func (c *StreamlineContainer) InfoEndpoint(ctx context.Context) (string, error) 
 		return "", err
 	}
 	return base + "/info", nil
+}
+
+// -------------------------------------------------------------------------
+// Enhanced capabilities: batch produce, consumer groups, migration helpers
+// -------------------------------------------------------------------------
+
+// ProduceMessages produces a batch of messages to a topic
+func (c *StreamlineContainer) ProduceMessages(ctx context.Context, topic string, messages []string) error {
+	for _, msg := range messages {
+		if err := c.ProduceMessage(ctx, topic, msg); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ProduceKeyedMessages produces a batch of keyed messages to a topic
+func (c *StreamlineContainer) ProduceKeyedMessages(ctx context.Context, topic string, messages map[string]string) error {
+	for key, value := range messages {
+		if err := c.ProduceKeyedMessage(ctx, topic, key, value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ListConsumerGroups lists consumer groups
+func (c *StreamlineContainer) ListConsumerGroups(ctx context.Context) ([]string, error) {
+	code, reader, err := c.Exec(ctx, []string{
+		"streamline-cli", "groups", "list", "--format", "json",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list consumer groups: %w", err)
+	}
+	if code != 0 {
+		return nil, fmt.Errorf("failed to list consumer groups, exit code: %d", code)
+	}
+	buf := make([]byte, 4096)
+	n, _ := reader.Read(buf)
+	output := string(buf[:n])
+	var groups []string
+	for _, line := range splitLines(output) {
+		trimmed := trimJSON(line)
+		if trimmed != "" {
+			groups = append(groups, trimmed)
+		}
+	}
+	return groups, nil
+}
+
+// AssertConsumerGroupExists asserts that a consumer group exists
+func (c *StreamlineContainer) AssertConsumerGroupExists(ctx context.Context, groupID string) error {
+	code, _, err := c.Exec(ctx, []string{
+		"streamline-cli", "groups", "describe", groupID,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to check consumer group: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("consumer group '%s' does not exist", groupID)
+	}
+	return nil
+}
+
+// GetClusterInfo retrieves cluster information from the HTTP API
+func (c *StreamlineContainer) GetClusterInfo(ctx context.Context) (string, error) {
+	endpoint, err := c.InfoEndpoint(ctx)
+	if err != nil {
+		return "", err
+	}
+	resp, err := httpGet(ctx, endpoint)
+	if err != nil {
+		return "", fmt.Errorf("failed to get cluster info: %w", err)
+	}
+	return resp, nil
+}
+
+// AssertTopicExists asserts that a topic exists
+func (c *StreamlineContainer) AssertTopicExists(ctx context.Context, topic string) error {
+	code, _, err := c.Exec(ctx, []string{
+		"streamline-cli", "topics", "describe", topic,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to check topic: %w", err)
+	}
+	if code != 0 {
+		return fmt.Errorf("topic '%s' does not exist", topic)
+	}
+	return nil
+}
+
+// AssertHealthy asserts the container is healthy via the health endpoint
+func (c *StreamlineContainer) AssertHealthy(ctx context.Context) error {
+	endpoint, err := c.HealthEndpoint(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = httpGet(ctx, endpoint)
+	if err != nil {
+		return fmt.Errorf("health check failed: %w", err)
+	}
+	return nil
+}
+
+// WithAuthentication enables SASL/PLAIN authentication
+func WithAuthentication(username, password string) ContainerOption {
+	return func(req *testcontainers.ContainerRequest) {
+		if req.Env == nil {
+			req.Env = make(map[string]string)
+		}
+		req.Env["STREAMLINE_AUTH_ENABLED"] = "true"
+		req.Env["STREAMLINE_AUTH_DEFAULT_USER"] = username
+		req.Env["STREAMLINE_AUTH_DEFAULT_PASSWORD"] = password
+	}
+}
+
+// WithAutoCreateTopics enables auto-topic creation with a default partition count
+func WithAutoCreateTopics(defaultPartitions int) ContainerOption {
+	return func(req *testcontainers.ContainerRequest) {
+		if req.Env == nil {
+			req.Env = make(map[string]string)
+		}
+		req.Env["STREAMLINE_AUTO_CREATE_TOPICS"] = "true"
+		req.Env["STREAMLINE_DEFAULT_PARTITIONS"] = fmt.Sprintf("%d", defaultPartitions)
+	}
+}
+
+// RunAsKafkaReplacement starts a Streamline container configured as a drop-in Kafka replacement
+func RunAsKafkaReplacement(ctx context.Context) (*StreamlineContainer, error) {
+	return RunContainer(ctx, WithInMemory(), WithAutoCreateTopics(1))
+}
+
+// WithEphemeral enables ephemeral mode: in-memory, auto-cleanup, fastest startup.
+func WithEphemeral() ContainerOption {
+	return func(req *testcontainers.ContainerRequest) {
+		req.Env["STREAMLINE_EPHEMERAL"] = "true"
+		req.Env["STREAMLINE_IN_MEMORY"] = "true"
+	}
+}
+
+// WithEphemeralIdleTimeout sets seconds to wait with zero connections before auto-shutdown.
+func WithEphemeralIdleTimeout(seconds int) ContainerOption {
+	return func(req *testcontainers.ContainerRequest) {
+		req.Env["STREAMLINE_EPHEMERAL_IDLE_TIMEOUT"] = fmt.Sprintf("%d", seconds)
+	}
+}
+
+// WithEphemeralAutoTopics pre-creates topics on startup (format: "name:partitions,name2:partitions2").
+func WithEphemeralAutoTopics(topicSpecs string) ContainerOption {
+	return func(req *testcontainers.ContainerRequest) {
+		req.Env["STREAMLINE_EPHEMERAL_AUTO_TOPICS"] = topicSpecs
+	}
+}
+
+// RunForTesting starts a container optimized for CI/CD: ephemeral, in-memory, auto-create, minimal logging.
+func RunForTesting(ctx context.Context, opts ...ContainerOption) (*StreamlineContainer, error) {
+	defaults := []ContainerOption{
+		WithEphemeral(),
+		WithAutoCreateTopics(3),
+		WithLogLevel("warn"),
+	}
+	return RunContainer(ctx, append(defaults, opts...)...)
+}
+
+// helpers
+
+func splitLines(s string) []string {
+	return strings.Split(s, "\n")
+}
+
+func trimJSON(s string) string {
+	s = strings.TrimSpace(s)
+	s = strings.Trim(s, "[]\",' \t")
+	return s
+}
+
+func httpGet(_ context.Context, url string) (string, error) {
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != 200 {
+		return "", fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+	return string(body), nil
 }

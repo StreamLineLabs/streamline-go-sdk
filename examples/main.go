@@ -15,7 +15,11 @@ import (
 func main() {
 	// Create client with default configuration
 	config := streamline.DefaultConfig()
-	config.Brokers = []string{"localhost:9092"}
+	brokers := os.Getenv("STREAMLINE_BOOTSTRAP_SERVERS")
+	if brokers == "" {
+		brokers = "localhost:9092"
+	}
+	config.Brokers = []string{brokers}
 
 	client, err := streamline.NewClient(config)
 	if err != nil {
