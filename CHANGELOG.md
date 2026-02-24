@@ -6,6 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+- **Changed**: update go.mod dependencies
 - **Changed**: extract connection pool management
 - **Testing**: add integration tests for producer batching
 - **Fixed**: resolve panic on nil message handling
