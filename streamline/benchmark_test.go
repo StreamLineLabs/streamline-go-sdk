@@ -613,3 +613,4 @@ func BenchmarkScramClient(b *testing.B) {
 		})
 	})
 }
+// TODO: add TestMain setup for integration tests
