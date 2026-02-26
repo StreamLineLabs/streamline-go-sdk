@@ -315,3 +315,4 @@ func (c *Client) Close() error {
 	}
 	return nil
 }
+// extract config validation into helper
