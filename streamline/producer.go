@@ -266,3 +266,4 @@ func (p *Producer) Close() error {
 	}
 	return nil
 }
+
