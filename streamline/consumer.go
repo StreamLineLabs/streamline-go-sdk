@@ -264,3 +264,4 @@ func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 	}
 }
 // perf: use sync.Pool for message buffers
+
