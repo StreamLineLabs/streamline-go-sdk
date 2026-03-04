@@ -332,6 +332,15 @@ config.TLS = &streamline.TLSConfig{
 | `DeleteConsumerGroup(ctx, groupID)` | Delete a consumer group |
 | `ResetConsumerGroupOffsets(ctx, groupID, topic, offset)` | Reset offsets |
 
+## Requirements
+
+- Go 1.22 or later
+- Streamline server 0.2.0 or later
+
+## Contributing
+
+Contributions are welcome! Please see the [organization contributing guide](https://github.com/streamlinelabs/.github/blob/main/CONTRIBUTING.md) for guidelines.
+
 ## License
 
 Apache-2.0
