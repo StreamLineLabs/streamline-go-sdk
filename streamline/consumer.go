@@ -35,14 +35,15 @@ type ConsumerMessage struct {
 
 // Consumer consumes messages from Streamline using consumer groups.
 type Consumer struct {
-	client       sarama.Client
-	config       *sarama.Config
-	groupID      string
-	topics       []string
-	consumerGrp  sarama.ConsumerGroup
-	handler      *consumerGroupHandler
-	messagesChan chan *ConsumerMessage
-	errorsChan   chan error
+	client         sarama.Client
+	config         *sarama.Config
+	groupID        string
+	topics         []string
+	consumerGrp    sarama.ConsumerGroup
+	handler        *consumerGroupHandler
+	messagesChan   chan *ConsumerMessage
+	errorsChan     chan error
+	circuitBreaker *CircuitBreaker
 
 	mu       sync.RWMutex
 	closed   bool
@@ -50,7 +51,7 @@ type Consumer struct {
 	wg       sync.WaitGroup
 }
 
-func newConsumer(client sarama.Client, config *sarama.Config, groupID string, topics []string) (*Consumer, error) {
+func newConsumer(client sarama.Client, config *sarama.Config, groupID string, topics []string, cb *CircuitBreaker) (*Consumer, error) {
 	consumerGrp, err := sarama.NewConsumerGroupFromClient(groupID, client)
 	if err != nil {
 		return nil, err
@@ -66,15 +67,16 @@ func newConsumer(client sarama.Client, config *sarama.Config, groupID string, to
 	}
 
 	c := &Consumer{
-		client:       client,
-		config:       config,
-		groupID:      groupID,
-		topics:       topics,
-		consumerGrp:  consumerGrp,
-		handler:      handler,
-		messagesChan: messagesChan,
-		errorsChan:   errorsChan,
-		stopChan:     stopChan,
+		client:         client,
+		config:         config,
+		groupID:        groupID,
+		topics:         topics,
+		consumerGrp:    consumerGrp,
+		handler:        handler,
+		messagesChan:   messagesChan,
+		errorsChan:     errorsChan,
+		stopChan:       stopChan,
+		circuitBreaker: cb,
 	}
 
 	return c, nil
@@ -105,11 +107,24 @@ func (c *Consumer) Start(ctx context.Context) (<-chan *ConsumerMessage, <-chan e
 			case <-c.stopChan:
 				return
 			default:
+				if c.circuitBreaker != nil && !c.circuitBreaker.Allow() {
+					select {
+					case c.errorsChan <- ErrCircuitOpen:
+					default:
+					}
+					time.Sleep(100 * time.Millisecond)
+					continue
+				}
 				if err := c.consumerGrp.Consume(ctx, c.topics, c.handler); err != nil {
+					if c.circuitBreaker != nil && IsRetryable(err) {
+						c.circuitBreaker.RecordFailure()
+					}
 					select {
 					case c.errorsChan <- err:
 					default:
 					}
+				} else if c.circuitBreaker != nil {
+					c.circuitBreaker.RecordSuccess()
 				}
 			}
 		}

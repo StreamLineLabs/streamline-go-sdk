@@ -52,6 +52,9 @@ type Config struct {
 
 	// MetadataRefreshInterval is how often to refresh cluster metadata.
 	MetadataRefreshInterval time.Duration
+
+	// CircuitBreaker configures the circuit breaker. Nil means disabled (opt-in).
+	CircuitBreaker *CircuitBreakerConfig
 }
 
 // SASLConfig holds SASL authentication configuration.
@@ -162,9 +165,10 @@ func DefaultConfig() Config {
 
 // Client is the main entry point for interacting with Streamline.
 type Client struct {
-	config       Config
-	saramaConfig *sarama.Config
-	client       sarama.Client
+	config         Config
+	saramaConfig   *sarama.Config
+	client         sarama.Client
+	circuitBreaker *CircuitBreaker
 
 	Producer *Producer
 	Admin    *Admin
@@ -245,8 +249,12 @@ func NewClient(config Config) (*Client, error) {
 		client:       client,
 	}
 
+	if config.CircuitBreaker != nil {
+		c.circuitBreaker = NewCircuitBreaker(*config.CircuitBreaker)
+	}
+
 	// Initialize producer
-	c.Producer, err = newProducer(client, saramaConfig)
+	c.Producer, err = newProducer(client, saramaConfig, c.circuitBreaker)
 	if err != nil {
 		client.Close()
 		return nil, fmt.Errorf("streamline: failed to create producer: %w", err)
@@ -272,7 +280,7 @@ func (c *Client) NewConsumer(ctx context.Context, groupID string, topics []strin
 	}
 	c.mu.RUnlock()
 
-	return newConsumer(c.client, c.saramaConfig, groupID, topics)
+	return newConsumer(c.client, c.saramaConfig, groupID, topics, c.circuitBreaker)
 }
 
 // Brokers returns the list of configured brokers.

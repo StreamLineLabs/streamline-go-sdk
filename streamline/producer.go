@@ -47,15 +47,16 @@ type ProducerResult struct {
 
 // Producer sends messages to Streamline.
 type Producer struct {
-	client    sarama.Client
-	producer  sarama.SyncProducer
-	asyncProd sarama.AsyncProducer
+	client         sarama.Client
+	producer       sarama.SyncProducer
+	asyncProd      sarama.AsyncProducer
+	circuitBreaker *CircuitBreaker
 
 	mu     sync.RWMutex
 	closed bool
 }
 
-func newProducer(client sarama.Client, config *sarama.Config) (*Producer, error) {
+func newProducer(client sarama.Client, config *sarama.Config, cb *CircuitBreaker) (*Producer, error) {
 	syncProd, err := sarama.NewSyncProducerFromClient(client)
 	if err != nil {
 		return nil, err
@@ -68,9 +69,10 @@ func newProducer(client sarama.Client, config *sarama.Config) (*Producer, error)
 	}
 
 	return &Producer{
-		client:    client,
-		producer:  syncProd,
-		asyncProd: asyncProd,
+		client:         client,
+		producer:       syncProd,
+		asyncProd:      asyncProd,
+		circuitBreaker: cb,
 	}, nil
 }
 
@@ -91,6 +93,10 @@ func (p *Producer) SendMessage(ctx context.Context, msg *Message) (*ProducerResu
 		return nil, fmt.Errorf("streamline: producer is closed")
 	}
 	p.mu.RUnlock()
+
+	if p.circuitBreaker != nil && !p.circuitBreaker.Allow() {
+		return nil, ErrCircuitOpen
+	}
 
 	saramaMsg := &sarama.ProducerMessage{
 		Topic: msg.Topic,
@@ -135,7 +141,14 @@ func (p *Producer) SendMessage(ctx context.Context, msg *Message) (*ProducerResu
 		return nil, ctx.Err()
 	case r := <-resultCh:
 		if r.err != nil {
-			return nil, fmt.Errorf("streamline: failed to send message: %w", r.err)
+			sendErr := fmt.Errorf("streamline: failed to send message: %w", r.err)
+			if p.circuitBreaker != nil && IsRetryable(sendErr) {
+				p.circuitBreaker.RecordFailure()
+			}
+			return nil, sendErr
+		}
+		if p.circuitBreaker != nil {
+			p.circuitBreaker.RecordSuccess()
 		}
 		return &ProducerResult{
 			Topic:     msg.Topic,
