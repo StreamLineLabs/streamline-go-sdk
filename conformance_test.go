@@ -49,6 +49,7 @@ func newClient(t *testing.T) *streamline.Client {
 	client, err := streamline.NewClient(cfg)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
+
 	}
 	return client
 }
