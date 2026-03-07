@@ -25,3 +25,8 @@ coverage.html
 
 # Misc
 *.log
+
+# IDE files
+.idea/
+*.swp
+*.swo
