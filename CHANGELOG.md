@@ -8,6 +8,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `Consumer.Commit()` now actually commits offsets via Sarama session (was a no-op returning nil)
+- `TracingProducer.SendAsync` span now ends after result is received (was ending before channel send)
+- Consumer group handler now stores session reference for manual offset commits
+
+### Changed
 - fix: handle context cancellation in consumer loop (2026-03-06)
 - refactor: improve client connection management (2026-03-06)
 - test: add benchmark for high-throughput producer (2026-03-06)
