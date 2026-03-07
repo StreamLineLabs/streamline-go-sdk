@@ -289,6 +289,67 @@ config.TLS = &streamline.TLSConfig{
 }
 ```
 
+## Error Handling
+
+All errors returned by the SDK implement the standard `error` interface. Structured errors are returned as `*StreamlineError` with error codes, hints, and retryability information.
+
+```go
+result, err := client.Producer.Send(ctx, "my-topic", nil, []byte("data"))
+if err != nil {
+    var se *streamline.StreamlineError
+    if errors.As(err, &se) {
+        switch se.Code {
+        case streamline.ErrTopicNotFound:
+            log.Printf("Topic missing: %s (hint: %s)", se.Message, se.Hint)
+        case streamline.ErrAuthentication:
+            log.Fatalf("Auth failed: %s", se.Message)
+        case streamline.ErrTimeout:
+            log.Printf("Timeout — retryable: %v", se.Retryable)
+        default:
+            log.Printf("Error [%s]: %s", se.Code, se.Message)
+        }
+    } else {
+        log.Printf("Unexpected error: %v", err)
+    }
+}
+```
+
+### Error Codes
+
+| Code | Constant | Retryable | Description |
+|------|----------|-----------|-------------|
+| `CONNECTION_ERROR` | `ErrConnection` | ✅ | Server unreachable or connection dropped |
+| `AUTHENTICATION_ERROR` | `ErrAuthentication` | ❌ | SASL/TLS credentials rejected |
+| `AUTHORIZATION_ERROR` | `ErrAuthorization` | ❌ | ACL denied the operation |
+| `TOPIC_NOT_FOUND` | `ErrTopicNotFound` | ❌ | Topic does not exist |
+| `TIMEOUT` | `ErrTimeout` | ✅ | Operation exceeded deadline |
+| `PRODUCER_ERROR` | `ErrProducer` | ✅ | Send failed (network, batch, etc.) |
+| `CONSUMER_ERROR` | `ErrConsumer` | ✅ | Consume/poll failed |
+| `SERIALIZATION_ERROR` | `ErrSerialization` | ❌ | Message encode/decode failed |
+| `CONFIGURATION_ERROR` | `ErrConfiguration` | ❌ | Invalid client configuration |
+| `INTERNAL_ERROR` | `ErrInternal` | ❌ | Unexpected internal error |
+
+### Helper Functions
+
+```go
+// Check if any error is a StreamlineError
+if streamline.IsStreamlineError(err) {
+    code := streamline.GetErrorCode(err)
+    log.Printf("Streamline error code: %s", code)
+}
+
+// Check if an error is safe to retry
+if streamline.IsRetryable(err) {
+    // Back off and retry the operation
+}
+
+// Unwrap to inspect the underlying cause
+var se *streamline.StreamlineError
+if errors.As(err, &se) && se.Err != nil {
+    log.Printf("Caused by: %v", se.Err)
+}
+```
+
 ## API Reference
 
 ### Client

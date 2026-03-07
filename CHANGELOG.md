@@ -6,14 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-- fix: handle context cancellation in consumer loop (2026-03-06)
-
-- refactor: improve client connection management (2026-03-06)
-
-- test: add benchmark for high-throughput producer (2026-03-06)
 ## [Unreleased]
 
-## [0.2.0] - 2026-02-28
+- fix: handle context cancellation in consumer loop (2026-03-06)
+- refactor: improve client connection management (2026-03-06)
+- test: add benchmark for high-throughput producer (2026-03-06)
 - **Fixed**: correct offset tracking in sync consumer
 - **Documentation**: update README with consumer group examples
 - **Added**: add TLS configuration helpers
@@ -27,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Resolve race condition in consumer offset commit
+
 
 ## [0.2.0] - 2026-02-18
 
