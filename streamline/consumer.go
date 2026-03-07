@@ -185,9 +185,24 @@ func (c *Consumer) Poll(ctx context.Context, maxRecords int, timeout time.Durati
 }
 
 // Commit commits the offsets for the consumed messages.
+// This forces an immediate offset commit for all messages that have been
+// marked via MarkMessage (which happens automatically when messages are
+// delivered through the messages channel).
 func (c *Consumer) Commit() error {
-	// Sarama auto-commits by default, but we can force a commit
-	// via MarkOffset in the handler's ConsumeClaim
+	c.handler.mu.Lock()
+	session := c.handler.session
+	c.handler.mu.Unlock()
+
+	if session == nil {
+		return &StreamlineError{
+			Code:      ErrConnection,
+			Message:   "no active consumer group session",
+			Hint:      "Ensure the consumer is started and has joined the group before committing.",
+			Retryable: true,
+		}
+	}
+
+	session.Commit()
 	return nil
 }
 
@@ -234,13 +249,21 @@ func (c *Consumer) Close() error {
 type consumerGroupHandler struct {
 	messagesChan chan *ConsumerMessage
 	stopChan     chan struct{}
+	mu           sync.Mutex
+	session      sarama.ConsumerGroupSession
 }
 
-func (h *consumerGroupHandler) Setup(sarama.ConsumerGroupSession) error {
+func (h *consumerGroupHandler) Setup(session sarama.ConsumerGroupSession) error {
+	h.mu.Lock()
+	h.session = session
+	h.mu.Unlock()
 	return nil
 }
 
 func (h *consumerGroupHandler) Cleanup(sarama.ConsumerGroupSession) error {
+	h.mu.Lock()
+	h.session = nil
+	h.mu.Unlock()
 	return nil
 }
 
@@ -278,5 +301,4 @@ func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 		}
 	}
 }
-// perf: use sync.Pool for message buffers
 
