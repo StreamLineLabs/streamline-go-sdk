@@ -154,11 +154,16 @@ func (tp *TracingProducer) SendBatch(ctx context.Context, messages []*Message) (
 }
 
 // SendAsync sends a message asynchronously with tracing.
+// Note: Uses a background context for the trace span since the SendAsync API
+// doesn't accept a context parameter. The span is correctly ended when the
+// async result is received.
 func (tp *TracingProducer) SendAsync(msg *Message) <-chan *AsyncProducerResult {
 	if msg.Headers == nil {
 		msg.Headers = make(map[string][]byte)
 	}
 
+	// Use background context since SendAsync doesn't accept a caller context.
+	// The span lifecycle is managed by the goroutine below.
 	ctx := context.Background()
 	spanName := fmt.Sprintf("%s produce", msg.Topic)
 	ctx, span := tp.tracer.Start(ctx, spanName,
@@ -171,7 +176,6 @@ func (tp *TracingProducer) SendAsync(msg *Message) <-chan *AsyncProducerResult {
 
 	wrappedCh := make(chan *AsyncProducerResult, 1)
 	go func() {
-		defer span.End()
 		result := <-resultCh
 		if result.Err != nil {
 			span.SetStatus(codes.Error, result.Err.Error())
@@ -183,6 +187,7 @@ func (tp *TracingProducer) SendAsync(msg *Message) <-chan *AsyncProducerResult {
 				attribute.Int64("messaging.message.offset", result.Offset),
 			)
 		}
+		span.End()
 		wrappedCh <- result
 	}()
 
