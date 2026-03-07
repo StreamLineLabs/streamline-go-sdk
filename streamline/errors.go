@@ -27,6 +27,8 @@ const (
 	ErrSerialization
 	// ErrConfiguration indicates an invalid configuration.
 	ErrConfiguration
+	// ErrRateLimited indicates the client is being rate-limited.
+	ErrRateLimited
 	// ErrInternal indicates an internal/unexpected error.
 	ErrInternal
 )
@@ -52,6 +54,8 @@ func (c ErrorCode) String() string {
 		return "SERIALIZATION_ERROR"
 	case ErrConfiguration:
 		return "CONFIGURATION_ERROR"
+	case ErrRateLimited:
+		return "RATE_LIMITED"
 	case ErrInternal:
 		return "INTERNAL_ERROR"
 	default:
