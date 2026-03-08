@@ -146,8 +146,8 @@ func DefaultConfig() Config {
 		MetadataRefreshInterval: 5 * time.Minute,
 		Producer: ProducerConfig{
 			MaxMessageBytes: 1048576, // 1MB
-			RequiredAcks:    -1,      // All replicas
-			Compression:     0,       // None
+			RequiredAcks:    -1,     // All replicas
+			Compression:     0,      // None
 			BatchSize:       16384,
 			BatchTimeout:    10 * time.Millisecond,
 			Idempotent:      false,
