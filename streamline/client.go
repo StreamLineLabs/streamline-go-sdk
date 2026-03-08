@@ -324,3 +324,12 @@ func (c *Client) Close() error {
 	return nil
 }
 // extract config validation into helper
+
+
+// validateResponse checks that a protocol response has valid structure.
+func validateResponse(data []byte) error {
+	if len(data) < 4 {
+		return fmt.Errorf("malformed response: expected at least 4 bytes, got %d", len(data))
+	}
+	return nil
+}
