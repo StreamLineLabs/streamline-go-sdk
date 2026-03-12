@@ -12,6 +12,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -30,22 +31,27 @@ func main() {
 	}
 
 	// Produce sample data
-	cfg := streamline.Config{Brokers: []string{bootstrap}}
+	cfg := streamline.DefaultConfig()
+	cfg.Brokers = []string{bootstrap}
 	client, err := streamline.NewClient(cfg)
 	if err != nil {
 		log.Fatalf("create client: %v", err)
 	}
 	defer client.Close()
 
-	admin := client.Admin()
-	if err := admin.CreateTopic("events", 1, 1); err != nil {
+	ctx := context.Background()
+
+	if err := client.Admin.CreateTopic(ctx, streamline.TopicConfig{
+		Name:              "events",
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	}); err != nil {
 		log.Printf("create topic (may already exist): %v", err)
 	}
 
-	producer := client.Producer()
 	for i := 0; i < 10; i++ {
 		msg := fmt.Sprintf(`{"user":"user-%d","action":"click","value":%d}`, i, i*10)
-		if _, err := producer.Send("events", []byte(msg)); err != nil {
+		if _, err := client.Producer.Send(ctx, "events", nil, []byte(msg)); err != nil {
 			log.Fatalf("produce: %v", err)
 		}
 	}
@@ -56,7 +62,7 @@ func main() {
 
 	// Simple SELECT
 	fmt.Println("\n--- All events (limit 5) ---")
-	result, err := queryClient.Query("SELECT * FROM topic('events') LIMIT 5")
+	result, err := queryClient.Query(ctx, "SELECT * FROM topic('events') LIMIT 5")
 	if err != nil {
 		log.Fatalf("query: %v", err)
 	}
@@ -67,7 +73,7 @@ func main() {
 
 	// Aggregation
 	fmt.Println("\n--- Count by action ---")
-	result, err = queryClient.Query("SELECT action, COUNT(*) as cnt FROM topic('events') GROUP BY action")
+	result, err = queryClient.Query(ctx, "SELECT action, COUNT(*) as cnt FROM topic('events') GROUP BY action")
 	if err != nil {
 		log.Fatalf("query: %v", err)
 	}
@@ -77,13 +83,22 @@ func main() {
 
 	// Query with options
 	fmt.Println("\n--- With custom timeout and limit ---")
+	opts := streamline.QueryOptions{TimeoutMs: 5000, MaxRows: 3}
 	result, err = queryClient.QueryWithOptions(
+		ctx,
 		"SELECT * FROM topic('events') ORDER BY offset DESC",
-		5000, // timeout ms
-		3,    // max rows
+		opts,
 	)
 	if err != nil {
 		log.Fatalf("query: %v", err)
 	}
 	fmt.Printf("Returned %d rows\n", len(result.Rows))
+
+	// Explain query plan
+	fmt.Println("\n--- Explain query plan ---")
+	plan, err := queryClient.Explain(ctx, "SELECT * FROM topic('events') LIMIT 10")
+	if err != nil {
+		log.Fatalf("explain: %v", err)
+	}
+	fmt.Println(plan)
 }

@@ -1,6 +1,9 @@
 package streamline
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 )
 
@@ -431,5 +434,160 @@ func TestConsumerGroupInfoNoMembers(t *testing.T) {
 	}
 	if info.State != "Empty" {
 		t.Errorf("State = %q, want 'Empty'", info.State)
+	}
+}
+
+// ── HTTP Admin Tests ────────────────────────────────────────────────────────
+
+func TestHTTPAdmin_ClusterInfo(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/cluster" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"cluster_id":"test-cluster","broker_id":1,"brokers":[{"id":1,"host":"broker-1","port":9092,"rack":"us-east-1a"},{"id":2,"host":"broker-2","port":9092}],"controller":1}`))
+	}))
+	defer srv.Close()
+
+	admin := NewHTTPAdmin(srv.URL)
+	info, err := admin.ClusterInfo(context.Background())
+	if err != nil {
+		t.Fatalf("ClusterInfo() error = %v", err)
+	}
+	if info.ClusterID != "test-cluster" {
+		t.Errorf("ClusterID = %q, want 'test-cluster'", info.ClusterID)
+	}
+	if len(info.Brokers) != 2 {
+		t.Errorf("len(Brokers) = %d, want 2", len(info.Brokers))
+	}
+	if info.Brokers[0].Host != "broker-1" {
+		t.Errorf("Brokers[0].Host = %q, want 'broker-1'", info.Brokers[0].Host)
+	}
+	if info.Brokers[0].Rack != "us-east-1a" {
+		t.Errorf("Brokers[0].Rack = %q, want 'us-east-1a'", info.Brokers[0].Rack)
+	}
+	if info.Controller != 1 {
+		t.Errorf("Controller = %d, want 1", info.Controller)
+	}
+}
+
+func TestHTTPAdmin_ConsumerGroupLag(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/consumer-groups/my-group/lag" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"group_id":"my-group","partitions":[{"topic":"events","partition":0,"current_offset":50,"end_offset":100,"lag":50}],"total_lag":50}`))
+	}))
+	defer srv.Close()
+
+	admin := NewHTTPAdmin(srv.URL)
+	lag, err := admin.ConsumerGroupLag(context.Background(), "my-group")
+	if err != nil {
+		t.Fatalf("ConsumerGroupLag() error = %v", err)
+	}
+	if lag.GroupID != "my-group" {
+		t.Errorf("GroupID = %q, want 'my-group'", lag.GroupID)
+	}
+	if len(lag.Partitions) != 1 {
+		t.Fatalf("len(Partitions) = %d, want 1", len(lag.Partitions))
+	}
+	if lag.Partitions[0].Lag != 50 {
+		t.Errorf("Partitions[0].Lag = %d, want 50", lag.Partitions[0].Lag)
+	}
+	if lag.TotalLag != 50 {
+		t.Errorf("TotalLag = %d, want 50", lag.TotalLag)
+	}
+}
+
+func TestHTTPAdmin_InspectMessages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("partition") != "0" {
+			t.Errorf("expected partition=0, got %s", r.URL.Query().Get("partition"))
+		}
+		if r.URL.Query().Get("limit") != "5" {
+			t.Errorf("expected limit=5, got %s", r.URL.Query().Get("limit"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"offset":0,"key":"k1","value":"v1","timestamp":1000,"partition":0,"headers":{"source":"test"}},{"offset":1,"value":"v2","timestamp":1001,"partition":0,"headers":{}}]`))
+	}))
+	defer srv.Close()
+
+	admin := NewHTTPAdmin(srv.URL)
+	msgs, err := admin.InspectMessages(context.Background(), "events", 0, nil, 5)
+	if err != nil {
+		t.Fatalf("InspectMessages() error = %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("len(messages) = %d, want 2", len(msgs))
+	}
+	if msgs[0].Value != "v1" {
+		t.Errorf("msgs[0].Value = %q, want 'v1'", msgs[0].Value)
+	}
+	if msgs[0].Headers["source"] != "test" {
+		t.Errorf("msgs[0].Headers['source'] = %q, want 'test'", msgs[0].Headers["source"])
+	}
+}
+
+func TestHTTPAdmin_LatestMessages(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("count") != "3" {
+			t.Errorf("expected count=3, got %s", r.URL.Query().Get("count"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"offset":97,"value":"msg1","timestamp":3000,"partition":0,"headers":{}},{"offset":98,"value":"msg2","timestamp":3001,"partition":0,"headers":{}}]`))
+	}))
+	defer srv.Close()
+
+	admin := NewHTTPAdmin(srv.URL)
+	msgs, err := admin.LatestMessages(context.Background(), "events", 3)
+	if err != nil {
+		t.Fatalf("LatestMessages() error = %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("len(messages) = %d, want 2", len(msgs))
+	}
+	if msgs[0].Offset != 97 {
+		t.Errorf("msgs[0].Offset = %d, want 97", msgs[0].Offset)
+	}
+}
+
+func TestHTTPAdmin_MetricsHistory(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/metrics/history" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`[{"name":"bytes_in","value":1024.5,"labels":{"topic":"events"},"timestamp":1000}]`))
+	}))
+	defer srv.Close()
+
+	admin := NewHTTPAdmin(srv.URL)
+	metrics, err := admin.MetricsHistory(context.Background())
+	if err != nil {
+		t.Fatalf("MetricsHistory() error = %v", err)
+	}
+	if len(metrics) != 1 {
+		t.Fatalf("len(metrics) = %d, want 1", len(metrics))
+	}
+	if metrics[0].Name != "bytes_in" {
+		t.Errorf("metrics[0].Name = %q, want 'bytes_in'", metrics[0].Name)
+	}
+	if metrics[0].Value != 1024.5 {
+		t.Errorf("metrics[0].Value = %f, want 1024.5", metrics[0].Value)
+	}
+}
+
+func TestHTTPAdmin_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`{"error":"internal"}`))
+	}))
+	defer srv.Close()
+
+	admin := NewHTTPAdmin(srv.URL)
+	_, err := admin.ClusterInfo(context.Background())
+	if err == nil {
+		t.Fatal("expected error for 500 response")
 	}
 }

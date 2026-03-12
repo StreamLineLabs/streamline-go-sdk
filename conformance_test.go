@@ -57,7 +57,7 @@ func newClient(t *testing.T) *streamline.Client {
 func newAdmin(t *testing.T) *streamline.Admin {
 	t.Helper()
 	client := newClient(t)
-	return client.Admin()
+	return client.Admin
 }
 
 // ========== PRODUCER (8 tests) ==========
@@ -65,14 +65,14 @@ func newAdmin(t *testing.T) *streamline.Admin {
 func TestP01_SimpleProduce(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("p01")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	result, err := producer.Send(topic, []byte("hello-conformance"))
+	producer := client.Producer
+	result, err := producer.Send(context.Background(), topic, nil, []byte("hello-conformance"))
 	if err != nil {
 		t.Fatalf("produce: %v", err)
 	}
@@ -87,18 +87,18 @@ func TestP01_SimpleProduce(t *testing.T) {
 func TestP02_KeyedProduce(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("p02")
-	if err := admin.CreateTopic(topic, 3, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(3), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	r1, err := producer.SendMessage(topic, streamline.Message{Key: []byte("user-42"), Value: []byte("msg1")})
+	producer := client.Producer
+	r1, err := producer.SendMessage(context.Background(), &streamline.Message{Topic: topic, Key: []byte("user-42"), Value: []byte("msg1")})
 	if err != nil {
 		t.Fatalf("produce keyed 1: %v", err)
 	}
-	r2, err := producer.SendMessage(topic, streamline.Message{Key: []byte("user-42"), Value: []byte("msg2")})
+	r2, err := producer.SendMessage(context.Background(), &streamline.Message{Topic: topic, Key: []byte("user-42"), Value: []byte("msg2")})
 	if err != nil {
 		t.Fatalf("produce keyed 2: %v", err)
 	}
@@ -110,18 +110,19 @@ func TestP02_KeyedProduce(t *testing.T) {
 func TestP03_HeadersProduce(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("p03")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	msg := streamline.Message{
+	producer := client.Producer
+	msg := &streamline.Message{
+		Topic:   topic,
 		Value:   []byte("with-headers"),
-		Headers: map[string]string{"x-trace-id": "abc-123", "x-source": "conformance"},
+		Headers: map[string][]byte{"x-trace-id": []byte("abc-123"), "x-source": []byte("conformance")},
 	}
-	result, err := producer.SendMessage(topic, msg)
+	result, err := producer.SendMessage(context.Background(), msg)
 	if err != nil {
 		t.Fatalf("produce with headers: %v", err)
 	}
@@ -133,18 +134,18 @@ func TestP03_HeadersProduce(t *testing.T) {
 func TestP04_BatchProduce(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("p04")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	messages := make([]streamline.Message, 10)
+	producer := client.Producer
+	messages := make([]*streamline.Message, 10)
 	for i := range messages {
-		messages[i] = streamline.Message{Value: []byte(fmt.Sprintf("batch-%d", i))}
+		messages[i] = &streamline.Message{Topic: topic, Value: []byte(fmt.Sprintf("batch-%d", i))}
 	}
-	results, err := producer.SendBatch(topic, messages)
+	results, err := producer.SendBatch(context.Background(), messages)
 	if err != nil {
 		t.Fatalf("batch produce: %v", err)
 	}
@@ -156,14 +157,14 @@ func TestP04_BatchProduce(t *testing.T) {
 func TestP05_Compression(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("p05")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	result, err := producer.Send(topic, []byte("compressed-message"))
+	producer := client.Producer
+	result, err := producer.Send(context.Background(), topic, nil, []byte("compressed-message"))
 	if err != nil {
 		t.Fatalf("produce with compression: %v", err)
 	}
@@ -175,19 +176,19 @@ func TestP05_Compression(t *testing.T) {
 func TestP06_Partitioner(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("p06")
-	if err := admin.CreateTopic(topic, 4, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(4), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
+	producer := client.Producer
 	// Same key should consistently map to the same partition
-	r1, err := producer.SendMessage(topic, streamline.Message{Key: []byte("deterministic"), Value: []byte("v1")})
+	r1, err := producer.SendMessage(context.Background(), &streamline.Message{Topic: topic, Key: []byte("deterministic"), Value: []byte("v1")})
 	if err != nil {
 		t.Fatalf("produce 1: %v", err)
 	}
-	r2, err := producer.SendMessage(topic, streamline.Message{Key: []byte("deterministic"), Value: []byte("v2")})
+	r2, err := producer.SendMessage(context.Background(), &streamline.Message{Topic: topic, Key: []byte("deterministic"), Value: []byte("v2")})
 	if err != nil {
 		t.Fatalf("produce 2: %v", err)
 	}
@@ -199,14 +200,14 @@ func TestP06_Partitioner(t *testing.T) {
 func TestP07_Idempotent(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("p07")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	result, err := producer.Send(topic, []byte("idempotent-msg"))
+	producer := client.Producer
+	result, err := producer.Send(context.Background(), topic, nil, []byte("idempotent-msg"))
 	if err != nil {
 		t.Fatalf("idempotent produce: %v", err)
 	}
@@ -226,8 +227,8 @@ func TestP08_Timeout(t *testing.T) {
 	}
 	defer client.Close()
 
-	producer := client.Producer()
-	_, err = producer.Send("test-topic", []byte("timeout-msg"))
+	producer := client.Producer
+	_, err = producer.Send(context.Background(), "test-topic", nil, []byte("timeout-msg"))
 	if err == nil {
 		t.Fatal("expected error when producing to unreachable server")
 	}
@@ -238,18 +239,18 @@ func TestP08_Timeout(t *testing.T) {
 func TestC01_Subscribe(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("c01")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	if _, err := producer.Send(topic, []byte("subscribe-test")); err != nil {
+	producer := client.Producer
+	if _, err := producer.Send(context.Background(), topic, nil, []byte("subscribe-test")); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, fmt.Sprintf("c01-group-%d", time.Now().UnixNano()))
+	consumer, err := client.NewConsumer(context.Background(), fmt.Sprintf("c01-group-%d", time.Now().UnixNano()), []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -259,20 +260,20 @@ func TestC01_Subscribe(t *testing.T) {
 func TestC02_FromBeginning(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("c02")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
+	producer := client.Producer
 	for i := 0; i < 5; i++ {
-		if _, err := producer.Send(topic, []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+		if _, err := producer.Send(context.Background(), topic, nil, []byte(fmt.Sprintf("msg-%d", i))); err != nil {
 			t.Fatalf("produce %d: %v", i, err)
 		}
 	}
 
-	consumer, err := client.NewConsumer(topic, fmt.Sprintf("c02-group-%d", time.Now().UnixNano()))
+	consumer, err := client.NewConsumer(context.Background(), fmt.Sprintf("c02-group-%d", time.Now().UnixNano()), []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -280,7 +281,7 @@ func TestC02_FromBeginning(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	messages, err := consumer.Poll(ctx, 5)
+	messages, err := consumer.Poll(ctx, 5, 10*time.Second)
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}
@@ -292,20 +293,20 @@ func TestC02_FromBeginning(t *testing.T) {
 func TestC03_FromOffset(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("c03")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
+	producer := client.Producer
 	for i := 0; i < 10; i++ {
-		if _, err := producer.Send(topic, []byte(fmt.Sprintf("msg-%d", i))); err != nil {
+		if _, err := producer.Send(context.Background(), topic, nil, []byte(fmt.Sprintf("msg-%d", i))); err != nil {
 			t.Fatalf("produce %d: %v", i, err)
 		}
 	}
 
-	consumer, err := client.NewConsumer(topic, fmt.Sprintf("c03-group-%d", time.Now().UnixNano()))
+	consumer, err := client.NewConsumer(context.Background(), fmt.Sprintf("c03-group-%d", time.Now().UnixNano()), []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -313,7 +314,7 @@ func TestC03_FromOffset(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	messages, err := consumer.Poll(ctx, 10)
+	messages, err := consumer.Poll(ctx, 10, 10*time.Second)
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}
@@ -325,18 +326,18 @@ func TestC03_FromOffset(t *testing.T) {
 func TestC04_FromTimestamp(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("c04")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	if _, err := producer.Send(topic, []byte("timestamped-msg")); err != nil {
+	producer := client.Producer
+	if _, err := producer.Send(context.Background(), topic, nil, []byte("timestamped-msg")); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, fmt.Sprintf("c04-group-%d", time.Now().UnixNano()))
+	consumer, err := client.NewConsumer(context.Background(), fmt.Sprintf("c04-group-%d", time.Now().UnixNano()), []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -344,7 +345,7 @@ func TestC04_FromTimestamp(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	messages, err := consumer.Poll(ctx, 1)
+	messages, err := consumer.Poll(ctx, 1, 10*time.Second)
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}
@@ -356,21 +357,21 @@ func TestC04_FromTimestamp(t *testing.T) {
 func TestC05_Follow(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("c05")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, fmt.Sprintf("c05-group-%d", time.Now().UnixNano()))
+	consumer, err := client.NewConsumer(context.Background(), fmt.Sprintf("c05-group-%d", time.Now().UnixNano()), []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
 	defer consumer.Close()
 
 	// Produce after consumer is created
-	producer := client.Producer()
-	if _, err := producer.Send(topic, []byte("follow-msg")); err != nil {
+	producer := client.Producer
+	if _, err := producer.Send(context.Background(), topic, nil, []byte("follow-msg")); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 	time.Sleep(500 * time.Millisecond)
@@ -379,24 +380,24 @@ func TestC05_Follow(t *testing.T) {
 func TestC06_Filter(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("c06")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
+	producer := client.Producer
 	for i := 0; i < 10; i++ {
 		key := "odd"
 		if i%2 == 0 {
 			key = "even"
 		}
-		if _, err := producer.SendMessage(topic, streamline.Message{Key: []byte(key), Value: []byte(fmt.Sprintf("val-%d", i))}); err != nil {
+		if _, err := producer.SendMessage(context.Background(), &streamline.Message{Topic: topic, Key: []byte(key), Value: []byte(fmt.Sprintf("val-%d", i))}); err != nil {
 			t.Fatalf("produce %d: %v", i, err)
 		}
 	}
 
-	consumer, err := client.NewConsumer(topic, fmt.Sprintf("c06-group-%d", time.Now().UnixNano()))
+	consumer, err := client.NewConsumer(context.Background(), fmt.Sprintf("c06-group-%d", time.Now().UnixNano()), []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -404,7 +405,7 @@ func TestC06_Filter(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	messages, err := consumer.Poll(ctx, 10)
+	messages, err := consumer.Poll(ctx, 10, 10*time.Second)
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}
@@ -424,22 +425,23 @@ func TestC06_Filter(t *testing.T) {
 func TestC07_Headers(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("c07")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	msg := streamline.Message{
+	producer := client.Producer
+	msg := &streamline.Message{
+		Topic:   topic,
 		Value:   []byte("headers-test"),
-		Headers: map[string]string{"x-test": "conformance-value"},
+		Headers: map[string][]byte{"x-test": []byte("conformance-value")},
 	}
-	if _, err := producer.SendMessage(topic, msg); err != nil {
+	if _, err := producer.SendMessage(context.Background(), msg); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, fmt.Sprintf("c07-group-%d", time.Now().UnixNano()))
+	consumer, err := client.NewConsumer(context.Background(), fmt.Sprintf("c07-group-%d", time.Now().UnixNano()), []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -447,7 +449,7 @@ func TestC07_Headers(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	messages, err := consumer.Poll(ctx, 1)
+	messages, err := consumer.Poll(ctx, 1, 10*time.Second)
 	if err != nil {
 		t.Fatalf("poll: %v", err)
 	}
@@ -462,13 +464,13 @@ func TestC07_Headers(t *testing.T) {
 func TestC08_Timeout(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("c08")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, fmt.Sprintf("c08-group-%d", time.Now().UnixNano()))
+	consumer, err := client.NewConsumer(context.Background(), fmt.Sprintf("c08-group-%d", time.Now().UnixNano()), []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -477,7 +479,7 @@ func TestC08_Timeout(t *testing.T) {
 	// Short timeout on empty topic should return empty, not hang
 	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
 	defer cancel()
-	messages, _ := consumer.Poll(ctx, 100)
+	messages, _ := consumer.Poll(ctx, 100, 10*time.Second)
 	if len(messages) != 0 {
 		t.Fatalf("expected 0 messages from empty topic, got %d", len(messages))
 	}
@@ -488,25 +490,25 @@ func TestC08_Timeout(t *testing.T) {
 func TestG01_JoinGroup(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("g01")
 	groupID := fmt.Sprintf("group-%d", time.Now().UnixNano())
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	if _, err := producer.Send(topic, []byte("group-test")); err != nil {
+	producer := client.Producer
+	if _, err := producer.Send(context.Background(), topic, nil, []byte("group-test")); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, groupID)
+	consumer, err := client.NewConsumer(context.Background(), groupID, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
 	defer consumer.Close()
 
-	groups, err := admin.ListConsumerGroups()
+	groups, err := admin.ListConsumerGroups(context.Background())
 	if err != nil {
 		t.Fatalf("list groups: %v", err)
 	}
@@ -516,20 +518,20 @@ func TestG01_JoinGroup(t *testing.T) {
 func TestG02_Rebalance(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("g02")
 	groupID := fmt.Sprintf("group-rebal-%d", time.Now().UnixNano())
-	if err := admin.CreateTopic(topic, 2, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(2), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	c1, err := client.NewConsumer(topic, groupID)
+	c1, err := client.NewConsumer(context.Background(), groupID, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer 1: %v", err)
 	}
 	defer c1.Close()
 
-	c2, err := client.NewConsumer(topic, groupID)
+	c2, err := client.NewConsumer(context.Background(), groupID, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer 2: %v", err)
 	}
@@ -541,19 +543,19 @@ func TestG02_Rebalance(t *testing.T) {
 func TestG03_CommitOffsets(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("g03")
 	groupID := fmt.Sprintf("group-commit-%d", time.Now().UnixNano())
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
-	if _, err := producer.Send(topic, []byte("commit-test")); err != nil {
+	producer := client.Producer
+	if _, err := producer.Send(context.Background(), topic, nil, []byte("commit-test")); err != nil {
 		t.Fatalf("produce: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, groupID)
+	consumer, err := client.NewConsumer(context.Background(), groupID, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -561,7 +563,7 @@ func TestG03_CommitOffsets(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	consumer.Poll(ctx, 1)
+	consumer.Poll(ctx, 1, 10*time.Second)
 
 	if err := consumer.Commit(); err != nil {
 		t.Fatalf("commit: %v", err)
@@ -571,25 +573,25 @@ func TestG03_CommitOffsets(t *testing.T) {
 func TestG04_LagMonitoring(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("g04")
 	groupID := fmt.Sprintf("group-lag-%d", time.Now().UnixNano())
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
+	producer := client.Producer
 	for i := 0; i < 5; i++ {
-		producer.Send(topic, []byte(fmt.Sprintf("lag-%d", i)))
+		producer.Send(context.Background(), topic, nil, []byte(fmt.Sprintf("lag-%d", i)))
 	}
 
-	consumer, err := client.NewConsumer(topic, groupID)
+	consumer, err := client.NewConsumer(context.Background(), groupID, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
 	defer consumer.Close()
 
-	info, err := admin.DescribeConsumerGroup(groupID)
+	info, err := admin.DescribeConsumerGroup(context.Background(), groupID)
 	if err != nil {
 		t.Logf("describe group (may not exist yet): %v", err)
 	} else {
@@ -600,14 +602,14 @@ func TestG04_LagMonitoring(t *testing.T) {
 func TestG05_ResetOffsets(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("g05")
 	groupID := fmt.Sprintf("group-reset-%d", time.Now().UnixNano())
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, groupID)
+	consumer, err := client.NewConsumer(context.Background(), groupID, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -618,14 +620,14 @@ func TestG05_ResetOffsets(t *testing.T) {
 func TestG06_LeaveGroup(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("g06")
 	groupID := fmt.Sprintf("group-leave-%d", time.Now().UnixNano())
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, groupID)
+	consumer, err := client.NewConsumer(context.Background(), groupID, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -636,27 +638,27 @@ func TestG06_LeaveGroup(t *testing.T) {
 func TestG07_IndependentGroups(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("g07")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	producer := client.Producer()
+	producer := client.Producer
 	for i := 0; i < 3; i++ {
-		producer.Send(topic, []byte(fmt.Sprintf("msg-%d", i)))
+		producer.Send(context.Background(), topic, nil, []byte(fmt.Sprintf("msg-%d", i)))
 	}
 
 	group1 := fmt.Sprintf("group-a-%d", time.Now().UnixNano())
 	group2 := fmt.Sprintf("group-b-%d", time.Now().UnixNano())
 
-	c1, err := client.NewConsumer(topic, group1)
+	c1, err := client.NewConsumer(context.Background(), group1, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer 1: %v", err)
 	}
 	defer c1.Close()
 
-	c2, err := client.NewConsumer(topic, group2)
+	c2, err := client.NewConsumer(context.Background(), group2, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer 2: %v", err)
 	}
@@ -665,8 +667,8 @@ func TestG07_IndependentGroups(t *testing.T) {
 	// Both groups independently consume
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	msgs1, _ := c1.Poll(ctx, 3)
-	msgs2, _ := c2.Poll(ctx, 3)
+	msgs1, _ := c1.Poll(ctx, 3, 10*time.Second)
+	msgs2, _ := c2.Poll(ctx, 3, 10*time.Second)
 
 	t.Logf("group1 got %d messages, group2 got %d messages", len(msgs1), len(msgs2))
 }
@@ -674,14 +676,14 @@ func TestG07_IndependentGroups(t *testing.T) {
 func TestG08_StaticMembership(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("g08")
 	groupID := fmt.Sprintf("group-static-%d", time.Now().UnixNano())
-	if err := admin.CreateTopic(topic, 2, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(2), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	consumer, err := client.NewConsumer(topic, groupID)
+	consumer, err := client.NewConsumer(context.Background(), groupID, []string{topic})
 	if err != nil {
 		t.Fatalf("create consumer: %v", err)
 	}
@@ -797,8 +799,8 @@ func TestA06_AuthFailure(t *testing.T) {
 	}
 	defer client.Close()
 	// If client was created, producing should fail
-	producer := client.Producer()
-	_, err = producer.Send("test", []byte("should-fail"))
+	producer := client.Producer
+	_, err = producer.Send(context.Background(), "test", nil, []byte("should-fail"))
 	if err == nil {
 		t.Fatal("expected auth error")
 	}
@@ -922,12 +924,12 @@ func TestD01_CreateTopic(t *testing.T) {
 	admin := newAdmin(t)
 	topic := uniqueTopic("d01")
 
-	err := admin.CreateTopic(topic, 3, 1)
+	err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(3), ReplicationFactor: int16(1)})
 	if err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
-	info, err := admin.DescribeTopic(topic)
+	info, _, err := admin.DescribeTopic(context.Background(), topic)
 	if err != nil {
 		t.Fatalf("describe topic: %v", err)
 	}
@@ -939,9 +941,9 @@ func TestD01_CreateTopic(t *testing.T) {
 func TestD02_ListTopics(t *testing.T) {
 	admin := newAdmin(t)
 	topic := uniqueTopic("d02")
-	admin.CreateTopic(topic, 1, 1)
+	admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)})
 
-	topics, err := admin.ListTopics()
+	topics, err := admin.ListTopics(context.Background())
 	if err != nil {
 		t.Fatalf("list topics: %v", err)
 	}
@@ -960,9 +962,9 @@ func TestD02_ListTopics(t *testing.T) {
 func TestD03_DescribeTopic(t *testing.T) {
 	admin := newAdmin(t)
 	topic := uniqueTopic("d03")
-	admin.CreateTopic(topic, 2, 1)
+	admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(2), ReplicationFactor: int16(1)})
 
-	info, err := admin.DescribeTopic(topic)
+	info, _, err := admin.DescribeTopic(context.Background(), topic)
 	if err != nil {
 		t.Fatalf("describe topic: %v", err)
 	}
@@ -974,13 +976,13 @@ func TestD03_DescribeTopic(t *testing.T) {
 func TestD04_DeleteTopic(t *testing.T) {
 	admin := newAdmin(t)
 	topic := uniqueTopic("d04")
-	admin.CreateTopic(topic, 1, 1)
+	admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)})
 
-	if err := admin.DeleteTopic(topic); err != nil {
+	if err := admin.DeleteTopic(context.Background(), topic); err != nil {
 		t.Fatalf("delete topic: %v", err)
 	}
 
-	topics, err := admin.ListTopics()
+	topics, err := admin.ListTopics(context.Background())
 	if err != nil {
 		t.Fatalf("list topics: %v", err)
 	}
@@ -997,8 +999,8 @@ func TestD05_AutoCreateTopic(t *testing.T) {
 
 	// Producing to a non-existent topic may auto-create it
 	topic := uniqueTopic("d05-auto")
-	producer := client.Producer()
-	_, err := producer.Send(topic, []byte("auto-create"))
+	producer := client.Producer
+	_, err := producer.Send(context.Background(), topic, nil, []byte("auto-create"))
 	// Either succeeds (auto-create enabled) or fails with TopicNotFound
 	if err != nil {
 		if !strings.Contains(err.Error(), "not found") && !strings.Contains(err.Error(), "NOT_FOUND") {
@@ -1010,12 +1012,12 @@ func TestD05_AutoCreateTopic(t *testing.T) {
 func TestD06_DuplicateTopicRejected(t *testing.T) {
 	admin := newAdmin(t)
 	topic := uniqueTopic("d06")
-	if err := admin.CreateTopic(topic, 1, 1); err != nil {
+	if err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)}); err != nil {
 		t.Fatalf("create topic: %v", err)
 	}
 
 	// Creating the same topic again should fail
-	err := admin.CreateTopic(topic, 1, 1)
+	err := admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)})
 	if err == nil {
 		t.Log("duplicate topic creation was accepted (server may allow idempotent creates)")
 	}
@@ -1034,8 +1036,8 @@ func TestE01_ConnectionRefused(t *testing.T) {
 	}
 	defer client.Close()
 
-	producer := client.Producer()
-	_, err = producer.Send("test", []byte("should-fail"))
+	producer := client.Producer
+	_, err = producer.Send(context.Background(), "test", nil, []byte("should-fail"))
 	if err == nil {
 		t.Fatal("expected connection error")
 	}
@@ -1044,7 +1046,7 @@ func TestE01_ConnectionRefused(t *testing.T) {
 
 func TestE02_AuthDenied(t *testing.T) {
 	// Validate error type properties
-	err := streamline.NewAuthenticationError("access denied")
+	err := streamline.NewAuthenticationError("access denied", nil)
 	if err == nil {
 		t.Fatal("expected non-nil error")
 	}
@@ -1067,7 +1069,7 @@ func TestE03_TopicNotFound(t *testing.T) {
 }
 
 func TestE04_RequestTimeout(t *testing.T) {
-	err := streamline.NewTimeoutError("produce")
+	err := streamline.NewTimeoutError("produce", nil)
 	if err == nil {
 		t.Fatal("expected non-nil error")
 	}
@@ -1077,16 +1079,16 @@ func TestE04_RequestTimeout(t *testing.T) {
 }
 
 func TestE05_DescriptiveErrorMessages(t *testing.T) {
-	connErr := streamline.NewConnectionError("localhost:1")
+	connErr := streamline.NewConnectionError("localhost:1", nil)
 	if connErr.Error() == "" {
 		t.Fatal("expected non-empty error message")
 	}
 
-	hint := streamline.GetErrorHint(connErr)
+	hint := connErr.Hint
 	t.Logf("connection error hint: %q", hint)
 
 	topicErr := streamline.NewTopicNotFoundError("my-topic")
-	hint = streamline.GetErrorHint(topicErr)
+	hint = topicErr.Hint
 	if hint == "" {
 		t.Log("no hint provided for TopicNotFound (consider adding one)")
 	}
@@ -1097,11 +1099,11 @@ func TestE05_DescriptiveErrorMessages(t *testing.T) {
 func TestF01_Throughput1KB(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("f01")
-	admin.CreateTopic(topic, 1, 1)
+	admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)})
 
-	producer := client.Producer()
+	producer := client.Producer
 	payload := make([]byte, 1024)
 	for i := range payload {
 		payload[i] = 'x'
@@ -1110,7 +1112,7 @@ func TestF01_Throughput1KB(t *testing.T) {
 
 	start := time.Now()
 	for i := 0; i < count; i++ {
-		if _, err := producer.Send(topic, payload); err != nil {
+		if _, err := producer.Send(context.Background(), topic, nil, payload); err != nil {
 			t.Fatalf("produce %d: %v", i, err)
 		}
 	}
@@ -1126,15 +1128,15 @@ func TestF01_Throughput1KB(t *testing.T) {
 func TestF02_LatencyP99(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("f02")
-	admin.CreateTopic(topic, 1, 1)
+	admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)})
 
-	producer := client.Producer()
+	producer := client.Producer
 	latencies := make([]time.Duration, 50)
 	for i := range latencies {
 		start := time.Now()
-		producer.Send(topic, []byte(fmt.Sprintf("lat-%d", i)))
+		producer.Send(context.Background(), topic, nil, []byte(fmt.Sprintf("lat-%d", i)))
 		latencies[i] = time.Since(start)
 	}
 
@@ -1168,18 +1170,18 @@ func TestF03_StartupTime(t *testing.T) {
 func TestF04_MemoryUsage(t *testing.T) {
 	client := newClient(t)
 	defer client.Close()
-	admin := client.Admin()
+	admin := client.Admin
 	topic := uniqueTopic("f04")
-	admin.CreateTopic(topic, 1, 1)
+	admin.CreateTopic(context.Background(), streamline.TopicConfig{Name: topic, NumPartitions: int32(1), ReplicationFactor: int16(1)})
 
 	var before runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
 
-	producer := client.Producer()
+	producer := client.Producer
 	payload := make([]byte, 1024)
 	for i := 0; i < 100; i++ {
-		producer.Send(topic, payload)
+		producer.Send(context.Background(), topic, nil, payload)
 	}
 
 	var after runtime.MemStats

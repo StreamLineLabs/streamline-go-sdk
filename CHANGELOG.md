@@ -8,10 +8,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `HTTPAdmin` client for expanded admin operations via HTTP REST API
+- `HTTPAdmin.ClusterInfo()` — cluster overview including broker list
+- `HTTPAdmin.ConsumerGroupLag()` / `ConsumerGroupTopicLag()` — consumer group lag monitoring
+- `HTTPAdmin.InspectMessages()` / `LatestMessages()` — message inspection by offset
+- `HTTPAdmin.MetricsHistory()` — server metrics history
+- Model types: `ClusterInfo`, `ConsumerLag`, `ConsumerGroupLag`, `InspectedMessage`, `MetricPoint`
+- Unit tests for all HTTPAdmin methods using `httptest`
+
 ### Fixed
 - `Consumer.Commit()` now actually commits offsets via Sarama session (was a no-op returning nil)
 - `TracingProducer.SendAsync` span now ends after result is received (was ending before channel send)
 - Consumer group handler now stores session reference for manual offset commits
+- `HealthCheck()` now uses correct `Client.Admin` field and `Config.Brokers` (was referencing non-existent fields)
 
 ### Changed
 - fix: handle context cancellation in consumer loop (2026-03-06)

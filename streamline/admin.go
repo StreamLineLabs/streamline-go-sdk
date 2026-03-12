@@ -2,7 +2,10 @@ package streamline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -397,4 +400,143 @@ func (a *Admin) Close() error {
 		return a.admin.Close()
 	}
 	return nil
+}
+
+// ── HTTP-based Admin Operations ─────────────────────────────────────────────
+// These methods communicate with the Streamline HTTP REST API (port 9094)
+// for operations not available via the Kafka wire protocol.
+
+// ClusterInfo holds cluster overview information.
+type ClusterInfo struct {
+	ClusterID  string       `json:"cluster_id"`
+	BrokerID   int32        `json:"broker_id"`
+	Brokers    []BrokerInfo `json:"brokers"`
+	Controller int32        `json:"controller"`
+}
+
+// ConsumerLag holds lag information for a single partition.
+type ConsumerLag struct {
+	Topic         string `json:"topic"`
+	Partition     int32  `json:"partition"`
+	CurrentOffset int64  `json:"current_offset"`
+	EndOffset     int64  `json:"end_offset"`
+	Lag           int64  `json:"lag"`
+}
+
+// ConsumerGroupLag holds aggregated lag for a consumer group.
+type ConsumerGroupLag struct {
+	GroupID    string        `json:"group_id"`
+	Partitions []ConsumerLag `json:"partitions"`
+	TotalLag   int64         `json:"total_lag"`
+}
+
+// InspectedMessage holds a message returned by the inspection API.
+type InspectedMessage struct {
+	Offset    int64             `json:"offset"`
+	Key       *string           `json:"key,omitempty"`
+	Value     string            `json:"value"`
+	Timestamp int64             `json:"timestamp"`
+	Partition int32             `json:"partition"`
+	Headers   map[string]string `json:"headers"`
+}
+
+// MetricPoint holds a single metric data point.
+type MetricPoint struct {
+	Name      string            `json:"name"`
+	Value     float64           `json:"value"`
+	Labels    map[string]string `json:"labels"`
+	Timestamp int64             `json:"timestamp"`
+}
+
+// HTTPAdmin provides administrative operations via the Streamline HTTP REST API.
+type HTTPAdmin struct {
+	baseURL    string
+	httpClient *http.Client
+}
+
+// NewHTTPAdmin creates a new HTTP-based admin client.
+func NewHTTPAdmin(baseURL string) *HTTPAdmin {
+	return &HTTPAdmin{
+		baseURL:    baseURL,
+		httpClient: &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// ClusterInfo returns cluster overview including broker list.
+func (h *HTTPAdmin) ClusterInfo(ctx context.Context) (*ClusterInfo, error) {
+	var result ClusterInfo
+	if err := h.get(ctx, "/v1/cluster", &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to get cluster info: %w", err)
+	}
+	return &result, nil
+}
+
+// ConsumerGroupLag returns lag details for a consumer group.
+func (h *HTTPAdmin) ConsumerGroupLag(ctx context.Context, groupID string) (*ConsumerGroupLag, error) {
+	var result ConsumerGroupLag
+	if err := h.get(ctx, fmt.Sprintf("/v1/consumer-groups/%s/lag", groupID), &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to get consumer group lag: %w", err)
+	}
+	return &result, nil
+}
+
+// ConsumerGroupTopicLag returns lag details for a specific topic within a group.
+func (h *HTTPAdmin) ConsumerGroupTopicLag(ctx context.Context, groupID, topic string) (*ConsumerGroupLag, error) {
+	var result ConsumerGroupLag
+	if err := h.get(ctx, fmt.Sprintf("/v1/consumer-groups/%s/lag/%s", groupID, topic), &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to get consumer group topic lag: %w", err)
+	}
+	return &result, nil
+}
+
+// InspectMessages browses messages from a topic partition.
+func (h *HTTPAdmin) InspectMessages(ctx context.Context, topic string, partition int32, offset *int64, limit int) ([]InspectedMessage, error) {
+	path := fmt.Sprintf("/v1/inspect/%s?partition=%d&limit=%d", topic, partition, limit)
+	if offset != nil {
+		path += fmt.Sprintf("&offset=%d", *offset)
+	}
+	var result []InspectedMessage
+	if err := h.get(ctx, path, &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to inspect messages: %w", err)
+	}
+	return result, nil
+}
+
+// LatestMessages returns the most recent messages from a topic.
+func (h *HTTPAdmin) LatestMessages(ctx context.Context, topic string, count int) ([]InspectedMessage, error) {
+	var result []InspectedMessage
+	if err := h.get(ctx, fmt.Sprintf("/v1/inspect/%s/latest?count=%d", topic, count), &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to get latest messages: %w", err)
+	}
+	return result, nil
+}
+
+// MetricsHistory returns metrics history from the server.
+func (h *HTTPAdmin) MetricsHistory(ctx context.Context) ([]MetricPoint, error) {
+	var result []MetricPoint
+	if err := h.get(ctx, "/v1/metrics/history", &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to get metrics history: %w", err)
+	}
+	return result, nil
+}
+
+// get performs an HTTP GET and decodes the JSON response into target.
+func (h *HTTPAdmin) get(ctx context.Context, path string, target any) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.baseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+	}
+
+	return json.NewDecoder(resp.Body).Decode(target)
 }

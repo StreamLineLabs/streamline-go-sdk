@@ -189,6 +189,15 @@ func (c *Consumer) Poll(ctx context.Context, maxRecords int, timeout time.Durati
 // marked via MarkMessage (which happens automatically when messages are
 // delivered through the messages channel).
 func (c *Consumer) Commit() error {
+	if c.handler == nil {
+		return &StreamlineError{
+			Code:      ErrConnection,
+			Message:   "no active consumer group session",
+			Hint:      "Ensure the consumer is started and has joined the group before committing.",
+			Retryable: true,
+		}
+	}
+
 	c.handler.mu.Lock()
 	session := c.handler.session
 	c.handler.mu.Unlock()

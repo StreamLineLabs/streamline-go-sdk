@@ -54,6 +54,10 @@ type Producer struct {
 
 	mu     sync.RWMutex
 	closed bool
+
+	inTransaction  bool
+	transactionBuf []*Message
+	transactionMu  sync.Mutex
 }
 
 func newProducer(client sarama.Client, config *sarama.Config, cb *CircuitBreaker) (*Producer, error) {
@@ -250,6 +254,70 @@ func (p *Producer) SendBatch(ctx context.Context, messages []*Message) ([]*Produ
 func (p *Producer) Flush(timeout time.Duration) error {
 	// Sarama doesn't have a flush method, but sync producer is already flushed
 	return nil
+}
+
+// BeginTransaction starts a new transaction. Messages sent via SendTransactional
+// are buffered until CommitTransaction or AbortTransaction is called.
+func (p *Producer) BeginTransaction() error {
+	p.transactionMu.Lock()
+	defer p.transactionMu.Unlock()
+
+	if p.inTransaction {
+		return fmt.Errorf("streamline: transaction already in progress")
+	}
+	p.inTransaction = true
+	p.transactionBuf = make([]*Message, 0)
+	return nil
+}
+
+// SendTransactional buffers a message within the current transaction.
+func (p *Producer) SendTransactional(ctx context.Context, msg *Message) error {
+	p.transactionMu.Lock()
+	defer p.transactionMu.Unlock()
+
+	if !p.inTransaction {
+		return fmt.Errorf("streamline: no transaction in progress")
+	}
+	p.transactionBuf = append(p.transactionBuf, msg)
+	return nil
+}
+
+// CommitTransaction sends all buffered messages atomically and ends the transaction.
+func (p *Producer) CommitTransaction(ctx context.Context) ([]*ProducerResult, error) {
+	p.transactionMu.Lock()
+	if !p.inTransaction {
+		p.transactionMu.Unlock()
+		return nil, fmt.Errorf("streamline: no transaction in progress")
+	}
+	messages := p.transactionBuf
+	p.transactionBuf = nil
+	p.inTransaction = false
+	p.transactionMu.Unlock()
+
+	if len(messages) == 0 {
+		return []*ProducerResult{}, nil
+	}
+	return p.SendBatch(ctx, messages)
+}
+
+// AbortTransaction discards all buffered messages and ends the transaction.
+func (p *Producer) AbortTransaction() error {
+	p.transactionMu.Lock()
+	defer p.transactionMu.Unlock()
+
+	if !p.inTransaction {
+		return fmt.Errorf("streamline: no transaction in progress")
+	}
+	p.transactionBuf = nil
+	p.inTransaction = false
+	return nil
+}
+
+// InTransaction returns true if a transaction is currently active.
+func (p *Producer) InTransaction() bool {
+	p.transactionMu.Lock()
+	defer p.transactionMu.Unlock()
+	return p.inTransaction
 }
 
 // Close closes the producer.

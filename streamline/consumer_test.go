@@ -162,8 +162,8 @@ func TestConsumerPollWhenClosed(t *testing.T) {
 
 func TestConsumerCommit(t *testing.T) {
 	c := &Consumer{}
-	if err := c.Commit(); err != nil {
-		t.Errorf("Commit should return nil, got %v", err)
+	if err := c.Commit(); err == nil {
+		t.Error("Commit on uninitialized consumer should return error")
 	}
 }
 

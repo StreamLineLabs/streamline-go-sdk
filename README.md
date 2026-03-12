@@ -14,6 +14,7 @@ Official Go client for [Streamline](https://github.com/streamlinelabs/streamline
 - Producer with batching and compression
 - Consumer with group coordination
 - Admin client for topic management
+- Query client for SQL analytics
 - SASL/SCRAM authentication support
 - TLS support
 
@@ -239,6 +240,78 @@ err := client.Admin.ResetConsumerGroupOffsets(ctx, "my-group", "my-topic", -2)
 err := client.Admin.ResetConsumerGroupOffsets(ctx, "my-group", "my-topic", -1)
 ```
 
+### HTTP Admin (Cluster, Lag, Inspect, Metrics)
+
+The `HTTPAdmin` client communicates with the Streamline HTTP REST API for operations not available via the Kafka wire protocol.
+
+```go
+admin := streamline.NewHTTPAdmin("http://localhost:9094")
+
+// Cluster overview
+cluster, err := admin.ClusterInfo(ctx)
+fmt.Printf("Cluster: %s, Brokers: %d\n", cluster.ClusterID, len(cluster.Brokers))
+
+// Consumer group lag monitoring
+lag, err := admin.ConsumerGroupLag(ctx, "my-group")
+fmt.Printf("Total lag: %d\n", lag.TotalLag)
+for _, p := range lag.Partitions {
+    fmt.Printf("  %s:%d lag=%d\n", p.Topic, p.Partition, p.Lag)
+}
+
+// Message inspection
+messages, err := admin.InspectMessages(ctx, "events", 0, nil, 10)
+for _, m := range messages {
+    fmt.Printf("offset=%d key=%v value=%s\n", m.Offset, m.Key, m.Value)
+}
+
+// Latest messages
+latest, err := admin.LatestMessages(ctx, "events", 5)
+
+// Server metrics
+metrics, err := admin.MetricsHistory(ctx)
+for _, m := range metrics {
+    fmt.Printf("%s=%f %v\n", m.Name, m.Value, m.Labels)
+}
+```
+
+## Query Client
+
+### Execute a Query
+
+```go
+queryClient := streamline.NewQueryClient("http://localhost:9094")
+
+result, err := queryClient.Query(ctx, "SELECT * FROM topic('events') LIMIT 10")
+if err != nil {
+    log.Fatal(err)
+}
+
+for _, row := range result.Rows {
+    fmt.Println(row)
+}
+fmt.Printf("Scanned %d rows in %dms\n", result.Metadata.RowsScanned, result.Metadata.ExecutionTimeMs)
+```
+
+### Query with Options
+
+```go
+opts := streamline.QueryOptions{
+    TimeoutMs: 5000,
+    MaxRows:   100,
+}
+result, err := queryClient.QueryWithOptions(ctx, "SELECT * FROM topic('events') ORDER BY offset DESC", opts)
+```
+
+### Explain Query Plan
+
+```go
+plan, err := queryClient.Explain(ctx, "SELECT * FROM topic('events') WHERE key = 'user-123'")
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Println(plan)
+```
+
 ## Configuration
 
 ### Producer Configuration
@@ -350,6 +423,34 @@ if errors.As(err, &se) && se.Err != nil {
 }
 ```
 
+## Circuit Breaker
+
+The SDK includes a circuit breaker that protects your application from cascading failures. The `Producer` uses it automatically; you can also use it directly:
+
+```go
+import "github.com/streamlinelabs/streamline-go-sdk/streamline"
+
+cb := streamline.NewCircuitBreaker(streamline.CircuitBreakerConfig{
+    FailureThreshold: 5,                // Open after 5 consecutive failures
+    SuccessThreshold: 2,                // Close after 2 half-open successes
+    OpenTimeout:      30 * time.Second, // Probe interval
+    OnStateChange: func(from, to streamline.CircuitState) {
+        log.Printf("Circuit: %s → %s", from, to)
+    },
+})
+
+if cb.Allow() {
+    err := doSomething()
+    if err != nil {
+        cb.RecordFailure()
+    } else {
+        cb.RecordSuccess()
+    }
+}
+```
+
+When the circuit is open, `Allow()` returns `false` and operations are rejected immediately. See the [Circuit Breaker guide](https://streamlinelabs.dev/docs/features/circuit-breaker) for details.
+
 ## API Reference
 
 ### Client
@@ -392,6 +493,15 @@ if errors.As(err, &se) && se.Err != nil {
 | `DescribeConsumerGroup(ctx, groupID)` | Get group details |
 | `DeleteConsumerGroup(ctx, groupID)` | Delete a consumer group |
 | `ResetConsumerGroupOffsets(ctx, groupID, topic, offset)` | Reset offsets |
+
+### Query
+
+| Method | Description |
+|--------|-------------|
+| `NewQueryClient(baseURL)` | Create a query client for the HTTP API |
+| `Query(ctx, sql)` | Execute a SQL query with default options |
+| `QueryWithOptions(ctx, sql, opts)` | Execute a SQL query with custom options |
+| `Explain(ctx, sql)` | Get the query execution plan |
 
 ## Requirements
 

@@ -16,6 +16,12 @@ jobs:
 
       - run: go build ./...
       - run: go vet ./...
+      - name: Verify examples compile
+        run: |
+          for dir in examples/*/; do
+            echo "Checking $dir..."
+            (cd "$dir" && go build ./...)
+          done
       - name: Run unit tests
         run: go test -short ./...
 

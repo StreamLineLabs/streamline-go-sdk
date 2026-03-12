@@ -3,6 +3,7 @@ package streamline
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -19,14 +20,16 @@ func (c *Client) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 	start := time.Now()
 
 	// Attempt metadata fetch as a connectivity check
-	_, err := c.admin.ListTopics(ctx)
+	_, err := c.Admin.ListTopics(ctx)
 	latency := time.Since(start)
+
+	broker := strings.Join(c.config.Brokers, ",")
 
 	if err != nil {
 		return &HealthStatus{
 			Healthy:   false,
 			Latency:   latency,
-			Broker:    c.config.BootstrapServers,
+			Broker:    broker,
 			Timestamp: time.Now(),
 		}, fmt.Errorf("health check failed: %w", err)
 	}
@@ -34,7 +37,7 @@ func (c *Client) HealthCheck(ctx context.Context) (*HealthStatus, error) {
 	return &HealthStatus{
 		Healthy:   true,
 		Latency:   latency,
-		Broker:    c.config.BootstrapServers,
+		Broker:    broker,
 		Timestamp: time.Now(),
 	}, nil
 }

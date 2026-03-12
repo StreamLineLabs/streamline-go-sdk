@@ -172,6 +172,7 @@ type Client struct {
 
 	Producer *Producer
 	Admin    *Admin
+	Metrics  *ClientMetrics
 
 	mu     sync.RWMutex
 	closed bool
@@ -247,6 +248,7 @@ func NewClient(config Config) (*Client, error) {
 		config:       config,
 		saramaConfig: saramaConfig,
 		client:       client,
+		Metrics:      NewClientMetrics(),
 	}
 
 	if config.CircuitBreaker != nil {
