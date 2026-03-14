@@ -508,6 +508,25 @@ When the circuit is open, `Allow()` returns `false` and operations are rejected 
 - Go 1.22 or later
 - Streamline server 0.2.0 or later
 
+## Examples
+
+The [`examples/`](examples/) directory contains runnable examples:
+
+| Example | Description |
+|---------|-------------|
+| [Basic Usage](examples/main.go) | Produce, consume, and admin operations |
+| [Query Usage](examples/query_usage/main.go) | SQL analytics with the embedded query engine |
+| [Schema Registry](examples/schema_registry/main.go) | Schema registration and validation |
+| [Circuit Breaker](examples/circuit_breaker/main.go) | Resilient production with circuit breaker |
+| [Security](examples/security/main.go) | TLS and SASL authentication |
+
+Run any example:
+
+```bash
+go run examples/main.go
+go run examples/circuit_breaker/main.go
+```
+
 ## Contributing
 
 Contributions are welcome! Please see the [organization contributing guide](https://github.com/streamlinelabs/.github/blob/main/CONTRIBUTING.md) for guidelines.

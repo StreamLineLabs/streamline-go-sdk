@@ -38,4 +38,4 @@ require (
 
 // Release automation configured
 
-// Updated dependency versions for v0.3.0
+// Updated dependency versions for v0.2.0
