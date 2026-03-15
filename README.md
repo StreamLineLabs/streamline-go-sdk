@@ -156,6 +156,27 @@ if result.Err != nil {
 }
 ```
 
+## Transactions
+
+The Go SDK supports client-side buffered transactions for atomic batch sends:
+
+```go
+producer := client.Producer()
+producer.BeginTransaction()
+
+producer.SendTransactional(ctx, &streamline.Message{Topic: "orders", Key: []byte("k1"), Value: []byte("v1")})
+producer.SendTransactional(ctx, &streamline.Message{Topic: "orders", Key: []byte("k2"), Value: []byte("v2")})
+
+results, err := producer.CommitTransaction(ctx)
+if err != nil {
+    producer.AbortTransaction()
+}
+```
+
+> **Note:** Transactions use client-side buffering — messages are collected locally and sent as
+> a batch on commit. This provides all-or-nothing delivery semantics at the client level.
+> If you need broker-level exactly-once semantics, combine with idempotent producers.
+
 ## Consumer
 
 ### Consume Messages
