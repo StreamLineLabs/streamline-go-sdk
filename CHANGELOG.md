@@ -75,3 +75,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Testcontainers support for integration testing
 - Apache 2.0 license
 - test: add health check endpoint integration test
+- refactor: extract retry policy into standalone package
