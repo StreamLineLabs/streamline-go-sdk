@@ -78,3 +78,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - refactor: extract retry policy into standalone package
 - docs: add gRPC metadata forwarding usage examples
 - docs: add streaming consumer lifecycle documentation
+- test: add metrics collection and health probe tests
