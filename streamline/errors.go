@@ -31,6 +31,16 @@ const (
 	ErrRateLimited
 	// ErrInternal indicates an internal/unexpected error.
 	ErrInternal
+	// ErrContractViolation indicates a record violated a topic's data contract.
+	ErrContractViolation
+	// ErrAttestationFailed indicates attestation signature verification failed.
+	ErrAttestationFailed
+	// ErrMemoryAccessDenied indicates an agent lacks permission to access memory.
+	ErrMemoryAccessDenied
+	// ErrBranchQuotaExceeded indicates a branch exceeded its storage/lifetime quota.
+	ErrBranchQuotaExceeded
+	// ErrSemanticSearchUnavailable indicates semantic search is unavailable.
+	ErrSemanticSearchUnavailable
 )
 
 // String returns the string representation of an ErrorCode.
@@ -58,6 +68,16 @@ func (c ErrorCode) String() string {
 		return "RATE_LIMITED"
 	case ErrInternal:
 		return "INTERNAL_ERROR"
+	case ErrContractViolation:
+		return "CONTRACT_VIOLATION"
+	case ErrAttestationFailed:
+		return "ATTESTATION_FAILED"
+	case ErrMemoryAccessDenied:
+		return "MEMORY_ACCESS_DENIED"
+	case ErrBranchQuotaExceeded:
+		return "BRANCH_QUOTA_EXCEEDED"
+	case ErrSemanticSearchUnavailable:
+		return "SEMANTIC_SEARCH_UNAVAILABLE"
 	default:
 		return "UNKNOWN_ERROR"
 	}
@@ -170,6 +190,57 @@ func NewConfigurationError(message string) *StreamlineError {
 		Code:      ErrConfiguration,
 		Message:   message,
 		Retryable: false,
+	}
+}
+
+// NewContractViolationError creates a contract violation error.
+func NewContractViolationError(topic string, details string) *StreamlineError {
+	return &StreamlineError{
+		Code:      ErrContractViolation,
+		Message:   fmt.Sprintf("contract violation on topic '%s': %s", topic, details),
+		Hint:      "Validate the record against the topic's registered schema",
+		Retryable: false,
+	}
+}
+
+// NewAttestationFailedError creates an attestation verification error.
+func NewAttestationFailedError(details string) *StreamlineError {
+	return &StreamlineError{
+		Code:      ErrAttestationFailed,
+		Message:   fmt.Sprintf("attestation verification failed: %s", details),
+		Hint:      "Check the signing key and attestation configuration",
+		Retryable: false,
+	}
+}
+
+// NewMemoryAccessDeniedError creates a memory access denied error.
+func NewMemoryAccessDeniedError(agent string) *StreamlineError {
+	return &StreamlineError{
+		Code:      ErrMemoryAccessDenied,
+		Message:   fmt.Sprintf("memory access denied for agent: %s", agent),
+		Hint:      "Verify agent permissions for memory operations",
+		Retryable: false,
+	}
+}
+
+// NewBranchQuotaExceededError creates a branch quota exceeded error.
+func NewBranchQuotaExceededError(branch string, details string) *StreamlineError {
+	return &StreamlineError{
+		Code:      ErrBranchQuotaExceeded,
+		Message:   fmt.Sprintf("branch quota exceeded for '%s': %s", branch, details),
+		Hint:      "Increase branch quotas or clean up unused branches",
+		Retryable: false,
+	}
+}
+
+// NewSemanticSearchUnavailableError creates a semantic search unavailable error.
+func NewSemanticSearchUnavailableError(details string, cause error) *StreamlineError {
+	return &StreamlineError{
+		Code:      ErrSemanticSearchUnavailable,
+		Message:   fmt.Sprintf("semantic search unavailable: %s", details),
+		Hint:      "Check embedding provider connectivity and configuration",
+		Retryable: true,
+		Err:       cause,
 	}
 }
 
