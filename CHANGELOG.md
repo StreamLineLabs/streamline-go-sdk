@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `streamline/moonshot` package — HTTP clients for the Streamline Moonshot
+  control plane (port `9094`):
+  - `BranchesClient` (M5 — list / create / delete / merge branches)
+  - `ContractsClient` (M4 — register / get / validate JSON-Schema contracts)
+  - `AttestationClient` (M4 — request signatures, verify them)
+  - `SearchClient` (M2 — semantic search across topics)
+  - `MemoryClient` (M1 — agent memory remember / recall)
+- `MoonshotOptions`, `MoonshotError` shared across the package.
+
+### Added
 - `HTTPAdmin` client for expanded admin operations via HTTP REST API
 - `HTTPAdmin.ClusterInfo()` — cluster overview including broker list
 - `HTTPAdmin.ConsumerGroupLag()` / `ConsumerGroupTopicLag()` — consumer group lag monitoring

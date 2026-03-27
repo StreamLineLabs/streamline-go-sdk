@@ -5,6 +5,7 @@
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Go](https://img.shields.io/badge/Go-1.22%2B-cyan.svg)](https://go.dev/)
 [![Docs](https://img.shields.io/badge/docs-streamlinelabs.dev-blue.svg)](https://streamlinelabs.dev/docs/sdks/go)
+[![Go Reference](https://pkg.go.dev/badge/github.com/streamlinelabs/streamline-go-sdk.svg)](https://pkg.go.dev/github.com/streamlinelabs/streamline-go-sdk)
 
 Official Go client for [Streamline](https://github.com/streamlinelabs/streamline-go-sdk) - The Redis of Streaming.
 
@@ -546,6 +547,60 @@ Run any example:
 ```bash
 go run examples/main.go
 go run examples/circuit_breaker/main.go
+```
+
+## Moonshot Features
+
+> ⚠️ **Experimental** — These features require Streamline server 0.3.0+ with moonshot feature flags enabled.
+
+### Semantic Search
+
+Query topics by meaning instead of offset. Requires a topic created with `semantic.embed=true`.
+
+```go
+results, err := consumer.Search(ctx, "logs.app", "payment failure", 10)
+if err != nil {
+    log.Fatal(err)
+}
+for _, hit := range results {
+    log.Printf("[p%d] offset=%d score=%.2f", hit.Partition, hit.Offset, hit.Score)
+}
+```
+
+### Attestation Verification
+
+Verify cryptographic provenance attestations attached to records by data contracts.
+
+```go
+verifier, err := streamline.NewVerifier(publicKeyBytes)
+if err != nil {
+    log.Fatal(err)
+}
+result, err := verifier.Verify(record)
+log.Printf("Verified: %v, Producer: %s", result.Verified, result.ProducerID)
+```
+
+### Agent Memory (MCP)
+
+Use Streamline as persistent memory for AI agents via the MCP protocol.
+
+```go
+memory := streamline.NewMemoryClient("http://localhost:9094/mcp/v1")
+err := memory.Remember(ctx, "user prefers dark mode", streamline.MemoryTags("preferences"))
+results, err := memory.Recall(ctx, "user preferences", 5)
+```
+
+### Branched Streams
+
+Create topic branches for replay, A/B testing, or counterfactual analysis.
+
+```go
+branch, err := client.Admin.CreateBranch(ctx, "events", "experiment-v2")
+if err != nil {
+    log.Fatal(err)
+}
+consumer, err := client.NewConsumer(ctx, "branch-group", []string{branch.Topic})
+messages, errors := consumer.Start(ctx)
 ```
 
 ## Contributing

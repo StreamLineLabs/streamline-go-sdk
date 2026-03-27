@@ -1,11 +1,13 @@
 package streamline
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"time"
 
 	"github.com/IBM/sarama"
@@ -448,6 +450,21 @@ type MetricPoint struct {
 	Timestamp int64             `json:"timestamp"`
 }
 
+// BranchInfo holds information about a copy-on-write topic branch (M5).
+type BranchInfo struct {
+	// Name is the branch name.
+	Name string `json:"name"`
+
+	// BaseTopic is the base topic this branch forks from.
+	BaseTopic string `json:"base_topic"`
+
+	// State is the branch state (active, discarded, merged).
+	State string `json:"state"`
+
+	// CreatedAt is the creation timestamp (epoch milliseconds).
+	CreatedAt int64 `json:"created_at"`
+}
+
 // HTTPAdmin provides administrative operations via the Streamline HTTP REST API.
 type HTTPAdmin struct {
 	baseURL    string
@@ -520,6 +537,44 @@ func (h *HTTPAdmin) MetricsHistory(ctx context.Context) ([]MetricPoint, error) {
 	return result, nil
 }
 
+// CreateBranch creates a copy-on-write branch of a topic (M5).
+func (h *HTTPAdmin) CreateBranch(ctx context.Context, name, baseTopic string, baseOffsets map[int32]int64) (*BranchInfo, error) {
+	body := map[string]any{
+		"name":       name,
+		"base_topic": baseTopic,
+	}
+	if len(baseOffsets) > 0 {
+		body["base_offsets"] = baseOffsets
+	}
+	var result BranchInfo
+	if err := h.post(ctx, "/v1/branches", body, &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to create branch: %w", err)
+	}
+	return &result, nil
+}
+
+// ListBranches lists copy-on-write topic branches (M5).
+func (h *HTTPAdmin) ListBranches(ctx context.Context, topic string) ([]BranchInfo, error) {
+	path := "/v1/branches"
+	if topic != "" {
+		path += "?topic=" + url.QueryEscape(topic)
+	}
+	var result []BranchInfo
+	if err := h.get(ctx, path, &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to list branches: %w", err)
+	}
+	return result, nil
+}
+
+// DiscardBranch discards (deletes) a copy-on-write topic branch (M5).
+func (h *HTTPAdmin) DiscardBranch(ctx context.Context, branchID string) error {
+	path := "/v1/branches/" + url.PathEscape(branchID)
+	if err := h.deleteReq(ctx, path); err != nil {
+		return fmt.Errorf("streamline: failed to discard branch: %w", err)
+	}
+	return nil
+}
+
 // get performs an HTTP GET and decodes the JSON response into target.
 func (h *HTTPAdmin) get(ctx context.Context, path string, target any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.baseURL+path, nil)
@@ -539,4 +594,48 @@ func (h *HTTPAdmin) get(ctx context.Context, path string, target any) error {
 	}
 
 	return json.NewDecoder(resp.Body).Decode(target)
+}
+
+// post performs an HTTP POST with a JSON body and decodes the JSON response.
+func (h *HTTPAdmin) post(ctx context.Context, path string, body any, target any) error {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("marshal body: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.baseURL+path, bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	if target != nil {
+		return json.NewDecoder(resp.Body).Decode(target)
+	}
+	return nil
+}
+
+// deleteReq performs an HTTP DELETE request.
+func (h *HTTPAdmin) deleteReq(ctx context.Context, path string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, h.baseURL+path, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	resp, err := h.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+	return nil
 }
