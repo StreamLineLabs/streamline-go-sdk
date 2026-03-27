@@ -16,8 +16,12 @@
 package streamline
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
 	"time"
 
@@ -55,6 +59,11 @@ type Config struct {
 
 	// CircuitBreaker configures the circuit breaker. Nil means disabled (opt-in).
 	CircuitBreaker *CircuitBreakerConfig
+
+	// HTTPEndpoint is the base URL for the Streamline HTTP admin API (port 9094).
+	// Used by moonshot features (semantic search, memory, branches, attestation).
+	// Default: "http://localhost:9094"
+	HTTPEndpoint string
 }
 
 // SASLConfig holds SASL authentication configuration.
@@ -144,6 +153,7 @@ func DefaultConfig() Config {
 		Version:                 sarama.V2_8_0_0,
 		ConnectionTimeout:       10 * time.Second,
 		MetadataRefreshInterval: 5 * time.Minute,
+		HTTPEndpoint:            "http://localhost:9094",
 		Producer: ProducerConfig{
 			MaxMessageBytes: 1048576, // 1MB
 			RequiredAcks:    -1,     // All replicas
@@ -334,4 +344,114 @@ func validateResponse(data []byte) error {
 		return fmt.Errorf("malformed response: expected at least 4 bytes, got %d", len(data))
 	}
 	return nil
+}
+
+// ── Moonshot: Agent Memory (M1) ────────────────────────────────────
+
+// MemoryEntry is a memory record to store via the memory API.
+type MemoryEntry struct {
+	AgentID    string   `json:"agent_id"`
+	Content    string   `json:"content"`
+	Kind       string   `json:"kind"`       // "fact", "observation", "preference", "procedure"
+	Importance float64  `json:"importance"`
+	Tags       []string `json:"tags,omitempty"`
+	Namespace  string   `json:"namespace,omitempty"` // shared namespace for multi-agent memory
+}
+
+// MemoryQuery is a semantic recall query against agent memory.
+type MemoryQuery struct {
+	AgentID   string `json:"agent_id"`
+	Query     string `json:"query"`
+	K         int    `json:"k"`
+	Namespace string `json:"namespace,omitempty"`
+}
+
+// MemoryHit is a single result from a memory recall query.
+type MemoryHit struct {
+	Tier    string  `json:"tier"`
+	Content string  `json:"content"`
+	Score   float64 `json:"score"`
+	Topic   string  `json:"topic"`
+	Offset  int64   `json:"offset"`
+}
+
+// MemoryRemember stores a memory entry via the Streamline HTTP memory API.
+func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) error {
+	endpoint := c.config.HTTPEndpoint
+	if endpoint == "" {
+		endpoint = "http://localhost:9094"
+	}
+
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("streamline: failed to marshal memory entry: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/memory/remember", endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return fmt.Errorf("streamline: failed to create remember request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("streamline: remember request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("streamline: remember failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+	return nil
+}
+
+// MemoryRecall retrieves memories by semantic similarity via the Streamline HTTP memory API.
+func (c *Client) MemoryRecall(ctx context.Context, query MemoryQuery) ([]MemoryHit, error) {
+	endpoint := c.config.HTTPEndpoint
+	if endpoint == "" {
+		endpoint = "http://localhost:9094"
+	}
+
+	if query.K == 0 {
+		query.K = 10
+	}
+
+	payload, err := json.Marshal(query)
+	if err != nil {
+		return nil, fmt.Errorf("streamline: failed to marshal recall query: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/memory/recall", endpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("streamline: failed to create recall request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("streamline: recall request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("streamline: failed to read recall response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("streamline: recall failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result struct {
+		Hits []MemoryHit `json:"hits"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to parse recall response: %w", err)
+	}
+	return result.Hits, nil
 }

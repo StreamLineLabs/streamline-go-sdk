@@ -1,8 +1,12 @@
 package streamline
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sync"
 	"time"
 
@@ -31,6 +35,27 @@ type ConsumerMessage struct {
 
 	// Timestamp is the message timestamp.
 	Timestamp time.Time
+}
+
+// SearchResult represents a single search hit from a topic.
+type SearchResult struct {
+	// Partition is the partition number of the matching record.
+	Partition int32 `json:"partition"`
+
+	// Offset is the offset of the matching record.
+	Offset int64 `json:"offset"`
+
+	// Score is the similarity score (higher = more relevant).
+	Score float64 `json:"score"`
+
+	// Value is the record value, if returned by the server.
+	Value json.RawMessage `json:"value,omitempty"`
+}
+
+// searchResponse is the internal response from the search API.
+type searchResponse struct {
+	Hits   []SearchResult `json:"hits"`
+	TookMs int64          `json:"took_ms"`
 }
 
 // Consumer consumes messages from Streamline using consumer groups.
@@ -252,6 +277,72 @@ func (c *Consumer) Close() error {
 		return fmt.Errorf("streamline: errors closing consumer: %v", errs)
 	}
 	return nil
+}
+
+// Search performs a semantic search against a topic via the HTTP API.
+//
+// The search request is sent to POST /api/v1/topics/{topic}/search on the
+// Streamline HTTP API (default port 9094). The broker host is derived from
+// the first configured broker address.
+func (c *Consumer) Search(ctx context.Context, topic, query string, k int) ([]SearchResult, error) {
+	if len(c.topics) == 0 && topic == "" {
+		return nil, fmt.Errorf("streamline: topic is required for search")
+	}
+
+	brokers := c.client.Brokers()
+	if len(brokers) == 0 {
+		return nil, fmt.Errorf("streamline: no brokers available")
+	}
+	addr := brokers[0].Addr()
+	host := addr
+	if idx := len(host) - 1; idx > 0 {
+		// Strip port from host:port
+		for i := len(host) - 1; i >= 0; i-- {
+			if host[i] == ':' {
+				host = host[:i]
+				break
+			}
+		}
+	}
+	baseURL := fmt.Sprintf("http://%s:9094", host)
+
+	payload, err := json.Marshal(map[string]interface{}{
+		"query": query,
+		"k":     k,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("streamline: failed to marshal search request: %w", err)
+	}
+
+	url := fmt.Sprintf("%s/api/v1/topics/%s/search", baseURL, topic)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return nil, fmt.Errorf("streamline: failed to create search request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	httpClient := &http.Client{Timeout: 30 * time.Second}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("streamline: search request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("streamline: failed to read search response: %w", err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("streamline: search failed (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	var result searchResponse
+	if err := json.Unmarshal(body, &result); err != nil {
+		return nil, fmt.Errorf("streamline: failed to parse search response: %w", err)
+	}
+
+	return result.Hits, nil
 }
 
 // consumerGroupHandler implements sarama.ConsumerGroupHandler.
