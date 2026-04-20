@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.3.0] - 2026-04-20
+
 ### Added
 - `streamline/moonshot` package — HTTP clients for the Streamline Moonshot
   control plane (port `9094`):
