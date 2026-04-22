@@ -292,7 +292,13 @@ func (c *Client) NewConsumer(ctx context.Context, groupID string, topics []strin
 	}
 	c.mu.RUnlock()
 
-	return newConsumer(c.client, c.saramaConfig, groupID, topics, c.circuitBreaker)
+	for _, topic := range topics {
+		if err := validateTopicName(topic); err != nil {
+			return nil, fmt.Errorf("streamline: %w", err)
+		}
+	}
+
+	return newConsumer(c.client, c.saramaConfig, groupID, topics, c.circuitBreaker, c.config.HTTPEndpoint)
 }
 
 // Brokers returns the list of configured brokers.
@@ -337,6 +343,14 @@ func (c *Client) Close() error {
 }
 // extract config validation into helper
 
+// httpEndpoint returns the configured HTTP endpoint, falling back to the default.
+func (c *Client) httpEndpoint() string {
+	if c.config.HTTPEndpoint != "" {
+		return c.config.HTTPEndpoint
+	}
+	return "http://localhost:9094"
+}
+
 
 // validateResponse checks that a protocol response has valid structure.
 func validateResponse(data []byte) error {
@@ -377,10 +391,7 @@ type MemoryHit struct {
 
 // MemoryRemember stores a memory entry via the Streamline HTTP memory API.
 func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) error {
-	endpoint := c.config.HTTPEndpoint
-	if endpoint == "" {
-		endpoint = "http://localhost:9094"
-	}
+	endpoint := c.httpEndpoint()
 
 	payload, err := json.Marshal(entry)
 	if err != nil {
@@ -410,10 +421,7 @@ func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) error {
 
 // MemoryRecall retrieves memories by semantic similarity via the Streamline HTTP memory API.
 func (c *Client) MemoryRecall(ctx context.Context, query MemoryQuery) ([]MemoryHit, error) {
-	endpoint := c.config.HTTPEndpoint
-	if endpoint == "" {
-		endpoint = "http://localhost:9094"
-	}
+	endpoint := c.httpEndpoint()
 
 	if query.K == 0 {
 		query.K = 10

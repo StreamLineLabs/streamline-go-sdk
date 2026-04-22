@@ -95,6 +95,10 @@ func newAdmin(client sarama.Client) (*Admin, error) {
 
 // CreateTopic creates a new topic.
 func (a *Admin) CreateTopic(ctx context.Context, config TopicConfig) error {
+	if err := validateTopicName(config.Name); err != nil {
+		return fmt.Errorf("streamline: %w", err)
+	}
+
 	detail := &sarama.TopicDetail{
 		NumPartitions:     config.NumPartitions,
 		ReplicationFactor: config.ReplicationFactor,
@@ -117,6 +121,10 @@ func (a *Admin) CreateTopic(ctx context.Context, config TopicConfig) error {
 
 // DeleteTopic deletes a topic.
 func (a *Admin) DeleteTopic(ctx context.Context, name string) error {
+	if err := validateTopicName(name); err != nil {
+		return fmt.Errorf("streamline: %w", err)
+	}
+
 	err := a.admin.DeleteTopic(name)
 	if err != nil {
 		return fmt.Errorf("streamline: failed to delete topic: %w", err)

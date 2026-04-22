@@ -213,6 +213,38 @@ func TestProducerSendAsyncWhenClosed(t *testing.T) {
 	}
 }
 
+func TestProducerSendValidatesTopicName(t *testing.T) {
+	p := &Producer{}
+
+	tests := []struct {
+		name    string
+		topic   string
+		wantErr bool
+	}{
+		{"empty topic", "", true},
+		{"dot topic", ".", true},
+		{"double dot topic", "..", true},
+		{"invalid chars", "topic@bad", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := p.Send(nil, tt.topic, nil, []byte("data"))
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Send(%q) error = %v, wantErr %v", tt.topic, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestProducerSendMessageValidatesTopicName(t *testing.T) {
+	p := &Producer{}
+	_, err := p.SendMessage(nil, &Message{Topic: "", Value: []byte("data")})
+	if err == nil {
+		t.Fatal("expected validation error for empty topic")
+	}
+}
+
 func TestProducerFlush(t *testing.T) {
 	p := &Producer{}
 	if err := p.Flush(time.Second); err != nil {

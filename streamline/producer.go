@@ -82,6 +82,9 @@ func newProducer(client sarama.Client, config *sarama.Config, cb *CircuitBreaker
 
 // Send sends a single message synchronously.
 func (p *Producer) Send(ctx context.Context, topic string, key, value []byte) (*ProducerResult, error) {
+	if err := validateTopicName(topic); err != nil {
+		return nil, fmt.Errorf("streamline: %w", err)
+	}
 	return p.SendMessage(ctx, &Message{
 		Topic: topic,
 		Key:   key,
@@ -91,6 +94,10 @@ func (p *Producer) Send(ctx context.Context, topic string, key, value []byte) (*
 
 // SendMessage sends a message with full options synchronously.
 func (p *Producer) SendMessage(ctx context.Context, msg *Message) (*ProducerResult, error) {
+	if err := validateTopicName(msg.Topic); err != nil {
+		return nil, fmt.Errorf("streamline: %w", err)
+	}
+
 	p.mu.RLock()
 	if p.closed {
 		p.mu.RUnlock()

@@ -25,7 +25,7 @@ import (
 
 const (
 	instrumentationName    = "streamline-go-sdk"
-	instrumentationVersion = "0.2.0"
+	instrumentationVersion = "0.3.0"
 )
 
 // messagingAttrs returns common OTel attributes for messaging spans.

@@ -328,6 +328,103 @@ func TestConsumerConfig(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigHTTPEndpoint(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.HTTPEndpoint != "http://localhost:9094" {
+		t.Errorf("expected default HTTPEndpoint 'http://localhost:9094', got %q", cfg.HTTPEndpoint)
+	}
+}
+
+func TestConfigCustomHTTPEndpoint(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.HTTPEndpoint = "http://custom-host:8080"
+	if cfg.HTTPEndpoint != "http://custom-host:8080" {
+		t.Errorf("expected custom HTTPEndpoint, got %q", cfg.HTTPEndpoint)
+	}
+}
+
+func TestClientHTTPEndpointHelper(t *testing.T) {
+	tests := []struct {
+		name         string
+		httpEndpoint string
+		want         string
+	}{
+		{
+			name:         "configured endpoint",
+			httpEndpoint: "http://myhost:9094",
+			want:         "http://myhost:9094",
+		},
+		{
+			name:         "empty falls back to default",
+			httpEndpoint: "",
+			want:         "http://localhost:9094",
+		},
+		{
+			name:         "custom port",
+			httpEndpoint: "https://secure.example.com:443",
+			want:         "https://secure.example.com:443",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := &Client{config: Config{HTTPEndpoint: tt.httpEndpoint}}
+			got := c.httpEndpoint()
+			if got != tt.want {
+				t.Errorf("httpEndpoint() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestNewConsumerValidatesTopicNames(t *testing.T) {
+	c := &Client{
+		config:       DefaultConfig(),
+		saramaConfig: sarama.NewConfig(),
+	}
+
+	tests := []struct {
+		name    string
+		topics  []string
+		wantErr bool
+	}{
+		{
+			name:    "valid topics",
+			topics:  []string{"topic-a", "topic_b", "topic.c"},
+			wantErr: false,
+		},
+		{
+			name:    "empty topic in list",
+			topics:  []string{"valid-topic", ""},
+			wantErr: true,
+		},
+		{
+			name:    "invalid characters",
+			topics:  []string{"topic@invalid"},
+			wantErr: true,
+		},
+		{
+			name:    "dot topic",
+			topics:  []string{"."},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// Use context nil and expect validation error before any sarama call
+			_, err := c.NewConsumer(nil, "group", tt.topics)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected validation error")
+				}
+			}
+			// For valid topics, we expect a different error (sarama client is nil)
+			// so we just verify that invalid topics are caught early
+		})
+	}
+}
+
 func TestClientCloseIdempotent(t *testing.T) {
 	// Verify that a Client with closed=true returns nil on Close
 	c := &Client{closed: true}

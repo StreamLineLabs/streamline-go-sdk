@@ -69,6 +69,7 @@ type Consumer struct {
 	messagesChan   chan *ConsumerMessage
 	errorsChan     chan error
 	circuitBreaker *CircuitBreaker
+	httpEndpoint   string
 
 	mu       sync.RWMutex
 	closed   bool
@@ -76,7 +77,7 @@ type Consumer struct {
 	wg       sync.WaitGroup
 }
 
-func newConsumer(client sarama.Client, config *sarama.Config, groupID string, topics []string, cb *CircuitBreaker) (*Consumer, error) {
+func newConsumer(client sarama.Client, config *sarama.Config, groupID string, topics []string, cb *CircuitBreaker, httpEndpoint string) (*Consumer, error) {
 	consumerGrp, err := sarama.NewConsumerGroupFromClient(groupID, client)
 	if err != nil {
 		return nil, err
@@ -102,6 +103,7 @@ func newConsumer(client sarama.Client, config *sarama.Config, groupID string, to
 		errorsChan:     errorsChan,
 		stopChan:       stopChan,
 		circuitBreaker: cb,
+		httpEndpoint:   httpEndpoint,
 	}
 
 	return c, nil
@@ -282,29 +284,17 @@ func (c *Consumer) Close() error {
 // Search performs a semantic search against a topic via the HTTP API.
 //
 // The search request is sent to POST /api/v1/topics/{topic}/search on the
-// Streamline HTTP API (default port 9094). The broker host is derived from
-// the first configured broker address.
+// Streamline HTTP API. The endpoint is determined by the HTTPEndpoint
+// configuration provided when the client was created.
 func (c *Consumer) Search(ctx context.Context, topic, query string, k int) ([]SearchResult, error) {
 	if len(c.topics) == 0 && topic == "" {
 		return nil, fmt.Errorf("streamline: topic is required for search")
 	}
 
-	brokers := c.client.Brokers()
-	if len(brokers) == 0 {
-		return nil, fmt.Errorf("streamline: no brokers available")
+	baseURL := c.httpEndpoint
+	if baseURL == "" {
+		baseURL = "http://localhost:9094"
 	}
-	addr := brokers[0].Addr()
-	host := addr
-	if idx := len(host) - 1; idx > 0 {
-		// Strip port from host:port
-		for i := len(host) - 1; i >= 0; i-- {
-			if host[i] == ':' {
-				host = host[:i]
-				break
-			}
-		}
-	}
-	baseURL := fmt.Sprintf("http://%s:9094", host)
 
 	payload, err := json.Marshal(map[string]interface{}{
 		"query": query,

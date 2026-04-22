@@ -437,6 +437,53 @@ func TestConsumerGroupInfoNoMembers(t *testing.T) {
 	}
 }
 
+func TestAdminCreateTopicValidatesName(t *testing.T) {
+	a := &Admin{}
+
+	tests := []struct {
+		name    string
+		topic   string
+		wantErr bool
+	}{
+		{"empty name", "", true},
+		{"dot name", ".", true},
+		{"double dot name", "..", true},
+		{"invalid chars", "topic/bad", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := a.CreateTopic(nil, TopicConfig{Name: tt.topic, NumPartitions: 1, ReplicationFactor: 1})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("CreateTopic(%q) error = %v, wantErr %v", tt.topic, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestAdminDeleteTopicValidatesName(t *testing.T) {
+	a := &Admin{}
+
+	tests := []struct {
+		name    string
+		topic   string
+		wantErr bool
+	}{
+		{"empty name", "", true},
+		{"dot name", ".", true},
+		{"invalid chars", "topic#bad", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := a.DeleteTopic(nil, tt.topic)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("DeleteTopic(%q) error = %v, wantErr %v", tt.topic, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // ── HTTP Admin Tests ────────────────────────────────────────────────────────
 
 func TestHTTPAdmin_ClusterInfo(t *testing.T) {

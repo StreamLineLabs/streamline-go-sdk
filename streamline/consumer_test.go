@@ -2,6 +2,8 @@ package streamline
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 )
@@ -183,6 +185,37 @@ func TestConsumerGroupHandler(t *testing.T) {
 	// Cleanup should return nil
 	if err := handler.Cleanup(nil); err != nil {
 		t.Errorf("Cleanup should return nil, got %v", err)
+	}
+}
+
+func TestConsumerSearchUsesHTTPEndpoint(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/topics/events/search" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte(`{"hits":[{"partition":0,"offset":42,"score":0.95}],"took_ms":5}`))
+	}))
+	defer srv.Close()
+
+	c := &Consumer{
+		topics:       []string{"events"},
+		httpEndpoint: srv.URL,
+		messagesChan: make(chan *ConsumerMessage, 1),
+	}
+
+	results, err := c.Search(context.Background(), "events", "test query", 5)
+	if err != nil {
+		t.Fatalf("Search() error = %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result, got %d", len(results))
+	}
+	if results[0].Offset != 42 {
+		t.Errorf("Offset = %d, want 42", results[0].Offset)
+	}
+	if results[0].Score != 0.95 {
+		t.Errorf("Score = %f, want 0.95", results[0].Score)
 	}
 }
 
