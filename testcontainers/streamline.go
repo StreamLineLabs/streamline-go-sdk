@@ -483,4 +483,3 @@ func httpGet(_ context.Context, url string) (string, error) {
 	}
 	return string(body), nil
 }
-

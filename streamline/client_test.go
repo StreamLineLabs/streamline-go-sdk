@@ -1,6 +1,7 @@
 package streamline
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -200,10 +201,10 @@ func TestSASLConfig(t *testing.T) {
 
 func TestTLSConfig(t *testing.T) {
 	tests := []struct {
-		name               string
-		tls                TLSConfig
-		wantEnable         bool
-		wantInsecureSkip   bool
+		name             string
+		tls              TLSConfig
+		wantEnable       bool
+		wantInsecureSkip bool
 	}{
 		{
 			name: "full TLS",
@@ -227,10 +228,10 @@ func TestTLSConfig(t *testing.T) {
 			wantInsecureSkip: true,
 		},
 		{
-			name:               "disabled TLS",
-			tls:                TLSConfig{Enable: false},
-			wantEnable:         false,
-			wantInsecureSkip:   false,
+			name:             "disabled TLS",
+			tls:              TLSConfig{Enable: false},
+			wantEnable:       false,
+			wantInsecureSkip: false,
 		},
 	}
 
@@ -412,8 +413,8 @@ func TestNewConsumerValidatesTopicNames(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Use context nil and expect validation error before any sarama call
-			_, err := c.NewConsumer(nil, "group", tt.topics)
+			// Topic validation runs before any sarama call is made.
+			_, err := c.NewConsumer(context.Background(), "group", tt.topics)
 			if tt.wantErr {
 				if err == nil {
 					t.Error("expected validation error")
@@ -435,7 +436,7 @@ func TestClientCloseIdempotent(t *testing.T) {
 
 func TestClientIsHealthyWhenClosed(t *testing.T) {
 	c := &Client{closed: true}
-	_, err := c.NewConsumer(nil, "group", []string{"topic"})
+	_, err := c.NewConsumer(context.Background(), "group", []string{"topic"})
 	if err == nil {
 		t.Fatal("expected error when client is closed")
 	}

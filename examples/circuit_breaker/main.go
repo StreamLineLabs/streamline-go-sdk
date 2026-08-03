@@ -19,6 +19,14 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run holds the example body so deferred cleanup still runs when it fails:
+// log.Fatal in main would skip every pending defer.
+func run() error {
 	fmt.Println("Circuit Breaker Example")
 	fmt.Println("========================================")
 
@@ -31,9 +39,13 @@ func main() {
 		Brokers: []string{brokers},
 	})
 	if err != nil {
-		log.Fatalf("Failed to connect: %v", err)
+		return fmt.Errorf("failed to connect: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Printf("Failed to close client: %v", closeErr)
+		}
+	}()
 
 	// Configure the circuit breaker
 	cb := streamline.NewCircuitBreaker(streamline.CircuitBreakerConfig{
@@ -48,8 +60,14 @@ func main() {
 
 	ctx := context.Background()
 
-	// Create a topic for the example
-	_ = client.Admin.CreateTopic(ctx, "cb-example", 1, 1, nil)
+	// Create a topic for the example; an existing topic is not an error here.
+	if createErr := client.Admin.CreateTopic(ctx, streamline.TopicConfig{
+		Name:              "cb-example",
+		NumPartitions:     1,
+		ReplicationFactor: 1,
+	}); createErr != nil {
+		log.Printf("Create topic (may already exist): %v", createErr)
+	}
 
 	// Send messages through the circuit breaker
 	for i := 0; i < 20; i++ {
@@ -59,10 +77,10 @@ func main() {
 			continue
 		}
 
-		result, err := client.Producer.Send(ctx, "cb-example", []byte(fmt.Sprintf("key-%d", i)), []byte(fmt.Sprintf("message-%d", i)))
-		if err != nil {
+		result, sendErr := client.Producer.Send(ctx, "cb-example", []byte(fmt.Sprintf("key-%d", i)), []byte(fmt.Sprintf("message-%d", i)))
+		if sendErr != nil {
 			cb.RecordFailure()
-			fmt.Printf("  Message %d: FAILED (%v) (circuit: %s)\n", i, err, cb.State())
+			fmt.Printf("  Message %d: FAILED (%v) (circuit: %s)\n", i, sendErr, cb.State())
 		} else {
 			cb.RecordSuccess()
 			fmt.Printf("  Message %d: sent to partition=%d offset=%d (circuit: %s)\n",
@@ -72,4 +90,6 @@ func main() {
 
 	fmt.Printf("\nFinal circuit state: %s\n", cb.State())
 	fmt.Println("Done!")
+
+	return nil
 }

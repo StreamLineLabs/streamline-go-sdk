@@ -3,16 +3,15 @@ package streamline
 import (
 	"crypto/sha256"
 	"crypto/sha512"
-	"hash"
 
 	"github.com/xdg-go/scram"
 )
 
 // SHA256 returns SHA256 hash generator.
-var SHA256 scram.HashGeneratorFcn = func() hash.Hash { return sha256.New() }
+var SHA256 scram.HashGeneratorFcn = sha256.New
 
 // SHA512 returns SHA512 hash generator.
-var SHA512 scram.HashGeneratorFcn = func() hash.Hash { return sha512.New() }
+var SHA512 scram.HashGeneratorFcn = sha512.New
 
 // XDGSCRAMClient implements sarama.SCRAMClient.
 type XDGSCRAMClient struct {
@@ -28,7 +27,7 @@ func (x *XDGSCRAMClient) Begin(userName, password, authzID string) error {
 		return err
 	}
 	x.Client = client
-	x.ClientConversation = x.Client.NewConversation()
+	x.ClientConversation = client.NewConversation()
 	return nil
 }
 

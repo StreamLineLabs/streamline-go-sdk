@@ -16,6 +16,12 @@ jobs:
 
       - run: go build ./...
       - run: go vet ./...
+      - name: Verify Testcontainers module
+        run: |
+          cd testcontainers
+          go build ./...
+          go vet ./...
+          go test ./...
       - name: Verify examples compile
         run: |
           for dir in examples/*/; do
@@ -25,8 +31,13 @@ jobs:
       - name: Run unit tests
         run: go test -short ./...
 
+      - name: Verify build tag variants
+        run: |
+          go vet -tags integration ./...
+          CGO_ENABLED=1 go build -tags embedded ./...
+
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
 
@@ -58,7 +69,10 @@ jobs:
           exit 1
 
       - name: Run conformance tests
-        run: go test -v -run 'Test[PCGADSEF]' -timeout 120s ./...
+        run: go test -v -tags=integration -run 'Test[PCGADSEF]' -timeout 120s ./...
+        env:
+          STREAMLINE_BOOTSTRAP: localhost:9092
+          STREAMLINE_HTTP: http://localhost:9094
 
       - name: Stop Streamline server
         if: always()

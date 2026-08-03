@@ -2,6 +2,7 @@ package streamline
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -60,7 +61,7 @@ type Producer struct {
 	transactionMu  sync.Mutex
 }
 
-func newProducer(client sarama.Client, config *sarama.Config, cb *CircuitBreaker) (*Producer, error) {
+func newProducer(client sarama.Client, cb *CircuitBreaker) (*Producer, error) {
 	syncProd, err := sarama.NewSyncProducerFromClient(client)
 	if err != nil {
 		return nil, err
@@ -68,7 +69,9 @@ func newProducer(client sarama.Client, config *sarama.Config, cb *CircuitBreaker
 
 	asyncProd, err := sarama.NewAsyncProducerFromClient(client)
 	if err != nil {
-		syncProd.Close()
+		if closeErr := syncProd.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return nil, err
 	}
 
@@ -354,4 +357,3 @@ func (p *Producer) Close() error {
 	}
 	return nil
 }
-

@@ -336,6 +336,42 @@ fmt.Println(plan)
 
 ## Configuration
 
+Every `Config` field is optional except `Brokers`. Invalid zero-valued fields
+such as connection/session timeouts receive safe defaults, while producer
+fields where zero has Kafka meaning retain that value. Start from
+`streamline.DefaultConfig()` when you want all recommended SDK defaults.
+
+```go
+client, err := streamline.NewClient(streamline.Config{
+    Brokers: []string{"localhost:9092"}, // everything else uses the defaults below
+})
+```
+
+| Field | Default |
+|-------|---------|
+| `ClientID` | `streamline-go-client` |
+| `Version` | Kafka 2.8.0 |
+| `ConnectionTimeout` | `10s` |
+| `MetadataRefreshInterval` | `5m` |
+| `HTTPEndpoint` | `http://localhost:9094` |
+| `Producer.MaxMessageBytes` | `1048576` (1 MB) |
+| `Producer.RequiredAcks` | `-1` (all replicas) |
+| `Producer.BatchSize` | `16384` |
+| `Producer.BatchTimeout` | `10ms` |
+| `Producer.Retries` | `3` |
+| `Consumer.AutoOffsetReset` | `latest` |
+| `Consumer.SessionTimeout` | `30s` |
+| `Consumer.HeartbeatInterval` | `3s` (shrunk to `SessionTimeout/3` for short session timeouts) |
+| `Consumer.MaxPollRecords` | `500` |
+
+`Producer.RequiredAcks`, `BatchSize`, `BatchTimeout`, and `Retries` all assign
+meaning to zero and are therefore left as-is in a partial config. A zero-valued
+`ProducerConfig` uses fire-and-forget acknowledgements, disables size/time
+batch flushing, and disables retries. Start from `streamline.DefaultConfig()`
+to use the table's recommended values. Enabling `Producer.Idempotent` promotes
+zero acknowledgements/retries to the required safe defaults because idempotent
+produces cannot run with weaker settings.
+
 ### Producer Configuration
 
 ```go
@@ -541,6 +577,7 @@ The [`examples/`](examples/) directory contains runnable examples:
 | [Schema Registry](examples/schema_registry/main.go) | Schema registration and validation |
 | [Circuit Breaker](examples/circuit_breaker/main.go) | Resilient production with circuit breaker |
 | [Security](examples/security/main.go) | TLS and SASL authentication |
+| [Agent Memory](examples/agent_memory/main.go) | Moonshot agent memory remember/recall |
 
 Run any example:
 
@@ -548,6 +585,84 @@ Run any example:
 go run examples/main.go
 go run examples/circuit_breaker/main.go
 ```
+
+## Embedded Mode (CGO)
+
+The [`embedded`](embedded/) package runs Streamline in-process through the
+native C ABI instead of talking to a server over the network. Because it links
+against `libstreamline`, it is compiled only when the `embedded` build tag is
+set and CGO is enabled:
+
+```bash
+CGO_ENABLED=1 \
+CGO_CFLAGS="-I/path/to/streamline/include" \
+CGO_LDFLAGS="-L/path/to/streamline/lib" \
+go build -tags embedded ./...
+```
+
+```go
+instance, err := embedded.New(embedded.Config{InMemory: true})
+if err != nil {
+    log.Fatal(err)
+}
+defer instance.Close()
+
+if err := instance.CreateTopic("events", 1); err != nil {
+    log.Fatal(err)
+}
+if err := instance.Produce("events", []byte("hello")); err != nil {
+    log.Fatal(err)
+}
+msg, err := instance.Consume("events", 5*time.Second)
+```
+
+Without the build tag the package still compiles and exposes the same API, but
+every operation returns `embedded.ErrNotEnabled`. That keeps `go build ./...`
+and `go test ./...` self-contained for users of the network client.
+
+## Testing
+
+Unit tests are self-contained — they never contact a broker, a server, or
+Docker:
+
+```bash
+go test ./...
+```
+
+The separate `testcontainers/` module is also part of the default build/test
+gate but skips Docker startup unless explicitly enabled:
+
+```bash
+cd testcontainers
+go test ./...
+
+STREAMLINE_TESTCONTAINERS_INTEGRATION=1 \
+STREAMLINE_TEST_IMAGE=ghcr.io/streamlinelabs/streamline@sha256:<digest> \
+go test -timeout 2m ./...
+```
+
+The conformance suite (46 tests) runs against a live Streamline server and is
+guarded by the `integration` build tag, so it is neither compiled nor run by
+default:
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+go test -tags=integration -timeout 120s ./...
+docker compose -f docker-compose.test.yml down -v
+
+# or, equivalently
+make integration-test
+```
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `STREAMLINE_BOOTSTRAP` | Kafka bootstrap address | `localhost:9092` |
+| `STREAMLINE_HTTP` | HTTP API base URL | `http://localhost:9094` |
+| `STREAMLINE_AUTH_ENABLED` | Set to `true` to run the TLS/SASL tests | unset |
+| `STREAMLINE_SKIP_INTEGRATION` | Skip the suite even when compiled in | unset |
+
+Passing `-short` also skips the suite, so `go test -short -tags=integration ./...`
+compiles it without needing a server.
 
 ## Moonshot Features
 
@@ -619,5 +734,3 @@ Do **not** open a public issue.
 See the [Security Policy](https://github.com/streamlinelabs/streamline/blob/main/SECURITY.md) for details.
 
 <!-- add godoc examples for consumer API -->
-
-

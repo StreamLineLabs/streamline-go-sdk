@@ -1,51 +1,69 @@
 # golangci-lint configuration for Streamline Go SDK
 # See: https://golangci-lint.run/usage/configuration/
+version: "2"
 
 run:
   timeout: 5m
-  go: "1.21"
+  go: "1.22"
+  # Lint the live-server conformance suite as well; it sits behind the
+  # "integration" build tag and is not part of `go test ./...`.
+  build-tags:
+    - integration
 
 linters:
+  # errcheck, govet, ineffassign, staticcheck (which absorbed gosimple), and
+  # unused are enabled by default in golangci-lint v2.
   enable:
-    - errcheck      # Check for unchecked errors
-    - gosimple      # Simplify code suggestions
-    - govet         # Report suspicious constructs
-    - ineffassign   # Detect unused variable assignments
-    - staticcheck   # Comprehensive static analysis
-    - unused        # Find unused code
-    - gosec         # Security-oriented linting
     - gocritic      # Opinionated style and performance checks
-    - gofmt         # Check code formatting
-    - goimports     # Check import ordering
+    - gosec         # Security-oriented linting
     - misspell      # Find common misspellings
+    - prealloc      # Suggest preallocations
     - unconvert     # Remove unnecessary type conversions
     - unparam       # Find unused function parameters
-    - prealloc      # Suggest preallocations
-
-linters-settings:
-  errcheck:
-    check-type-assertions: true
-    check-blank: true
-  gosec:
-    excludes:
-      - G104  # Unhandled errors (covered by errcheck)
-  gocritic:
-    enabled-tags:
-      - diagnostic
-      - performance
-      - style
-  govet:
-    enable-all: true
-    disable:
-      - fieldalignment  # Too noisy for SDK code
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: true
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+      disabled-checks:
+        # Config is part of the public API (NewClient takes it by value), so
+        # passing it around by value is deliberate rather than actionable.
+        - hugeParam
+    gosec:
+      excludes:
+        - G104  # Unhandled errors (covered by errcheck)
+    govet:
+      enable-all: true
+      disable:
+        - fieldalignment  # Too noisy for SDK code
+  exclusions:
+    generated: lax
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - gocritic
+          - gosec
+          - unparam
+      # Table-driven tests build struct literals and assert on a subset of the
+      # fields, which govet's unusedwrite check reports as dead writes.
+      - path: _test\.go
+        linters:
+          - govet
+        text: unusedwrite
 
 issues:
-  exclude-use-default: false
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    - path: _test\.go
-      linters:
-        - gosec
-        - errcheck
-        - gocritic
+
+formatters:
+  # gofmt and goimports moved from "linters" to "formatters" in v2.
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax

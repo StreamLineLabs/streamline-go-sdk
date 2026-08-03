@@ -18,10 +18,14 @@ package streamline
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
@@ -29,6 +33,12 @@ import (
 )
 
 // Config holds the configuration for a Streamline client.
+//
+// A zero value is usable for fields whose zero value is invalid (for example
+// connection timeouts). Producer fields where zero has Kafka semantics
+// (RequiredAcks, BatchSize, BatchTimeout, Retries) are preserved. Start from
+// DefaultConfig when the SDK's recommended producer defaults are desired.
+// Brokers has no default — at least one address is required.
 type Config struct {
 	// Brokers is a list of broker addresses.
 	Brokers []string
@@ -102,7 +112,7 @@ type ProducerConfig struct {
 	MaxMessageBytes int
 
 	// RequiredAcks specifies the acknowledgment level.
-	// 0 = no acks, 1 = leader only, -1 = all replicas.
+	// 0 = no response, 1 = leader only, -1 = all replicas.
 	RequiredAcks int16
 
 	// Compression specifies the compression codec.
@@ -115,7 +125,8 @@ type ProducerConfig struct {
 	// BatchTimeout is how long to wait before flushing a partial batch.
 	BatchTimeout time.Duration
 
-	// Idempotent enables exactly-once semantics.
+	// Idempotent enables exactly-once semantics. It requires RequiredAcks to be
+	// -1 (the default).
 	Idempotent bool
 
 	// Retries is the number of times to retry failed sends.
@@ -145,32 +156,117 @@ type ConsumerConfig struct {
 	IsolationLevel int8
 }
 
+// Default configuration values. DefaultConfig applies all of them;
+// Config.withDefaults applies only defaults whose zero value is not itself a
+// meaningful Kafka setting.
+const (
+	defaultBroker                  = "localhost:9092"
+	defaultClientID                = "streamline-go-client"
+	defaultConnectionTimeout       = 10 * time.Second
+	defaultMetadataRefreshInterval = 5 * time.Minute
+	defaultHTTPEndpoint            = "http://localhost:9094"
+
+	defaultMaxMessageBytes = 1048576 // 1MB
+	defaultRequiredAcks    = int16(-1)
+	defaultBatchSize       = 16384
+	defaultBatchTimeout    = 10 * time.Millisecond
+	defaultRetries         = 3
+
+	defaultAutoOffsetReset   = "latest"
+	defaultSessionTimeout    = 30 * time.Second
+	defaultHeartbeatInterval = 3 * time.Second
+	defaultMaxPollRecords    = 500
+
+	// minHeartbeatInterval is the smallest heartbeat interval accepted by the
+	// Kafka protocol implementation.
+	minHeartbeatInterval = time.Millisecond
+)
+
+// defaultKafkaVersion is the protocol version negotiated when Config.Version is unset.
+var defaultKafkaVersion = sarama.V2_8_0_0
+
 // DefaultConfig returns a Config with sensible defaults.
 func DefaultConfig() Config {
 	return Config{
-		Brokers:                 []string{"localhost:9092"},
-		ClientID:                "streamline-go-client",
-		Version:                 sarama.V2_8_0_0,
-		ConnectionTimeout:       10 * time.Second,
-		MetadataRefreshInterval: 5 * time.Minute,
-		HTTPEndpoint:            "http://localhost:9094",
+		Brokers:                 []string{defaultBroker},
+		ClientID:                defaultClientID,
+		Version:                 defaultKafkaVersion,
+		ConnectionTimeout:       defaultConnectionTimeout,
+		MetadataRefreshInterval: defaultMetadataRefreshInterval,
+		HTTPEndpoint:            defaultHTTPEndpoint,
 		Producer: ProducerConfig{
-			MaxMessageBytes: 1048576, // 1MB
-			RequiredAcks:    -1,     // All replicas
-			Compression:     0,      // None
-			BatchSize:       16384,
-			BatchTimeout:    10 * time.Millisecond,
+			MaxMessageBytes: defaultMaxMessageBytes,
+			RequiredAcks:    defaultRequiredAcks,
+			Compression:     0, // None
+			BatchSize:       defaultBatchSize,
+			BatchTimeout:    defaultBatchTimeout,
 			Idempotent:      false,
-			Retries:         3,
+			Retries:         defaultRetries,
 		},
 		Consumer: ConsumerConfig{
-			AutoOffsetReset:   "latest",
-			SessionTimeout:    30 * time.Second,
-			HeartbeatInterval: 3 * time.Second,
-			MaxPollRecords:    500,
+			AutoOffsetReset:   defaultAutoOffsetReset,
+			SessionTimeout:    defaultSessionTimeout,
+			HeartbeatInterval: defaultHeartbeatInterval,
+			MaxPollRecords:    defaultMaxPollRecords,
 			IsolationLevel:    0, // Read uncommitted
 		},
 	}
+}
+
+// withDefaults returns a copy of the config with invalid zero-valued fields
+// replaced by safe defaults. Meaningful Kafka zero values are retained.
+// Brokers is deliberately not defaulted: NewClient requires at least one
+// broker address.
+func (c Config) withDefaults() Config {
+	if c.ClientID == "" {
+		c.ClientID = defaultClientID
+	}
+	if !c.Version.IsAtLeast(sarama.MinVersion) {
+		c.Version = defaultKafkaVersion
+	}
+	if c.ConnectionTimeout <= 0 {
+		c.ConnectionTimeout = defaultConnectionTimeout
+	}
+	if c.MetadataRefreshInterval <= 0 {
+		c.MetadataRefreshInterval = defaultMetadataRefreshInterval
+	}
+	if c.HTTPEndpoint == "" {
+		c.HTTPEndpoint = defaultHTTPEndpoint
+	}
+
+	if c.Producer.MaxMessageBytes <= 0 {
+		c.Producer.MaxMessageBytes = defaultMaxMessageBytes
+	}
+	if c.Producer.Idempotent && c.Producer.RequiredAcks == 0 {
+		c.Producer.RequiredAcks = defaultRequiredAcks
+	}
+	if c.Producer.Idempotent && c.Producer.Retries <= 0 {
+		c.Producer.Retries = defaultRetries
+	}
+
+	if c.Consumer.AutoOffsetReset == "" {
+		c.Consumer.AutoOffsetReset = defaultAutoOffsetReset
+	}
+	if c.Consumer.SessionTimeout <= 0 {
+		c.Consumer.SessionTimeout = defaultSessionTimeout
+	}
+	if c.Consumer.HeartbeatInterval <= 0 {
+		// The heartbeat interval must stay below the session timeout, so a
+		// caller-supplied short session timeout shrinks the default heartbeat.
+		heartbeat := defaultHeartbeatInterval
+		if heartbeat >= c.Consumer.SessionTimeout {
+			heartbeat = c.Consumer.SessionTimeout / 3
+		}
+		if heartbeat < minHeartbeatInterval {
+			heartbeat = minHeartbeatInterval
+		}
+		c.Consumer.HeartbeatInterval = heartbeat
+	}
+	if c.Consumer.MaxPollRecords <= 0 {
+		c.Consumer.MaxPollRecords = defaultMaxPollRecords
+	}
+
+	return c
 }
 
 // Client is the main entry point for interacting with Streamline.
@@ -188,12 +284,9 @@ type Client struct {
 	closed bool
 }
 
-// NewClient creates a new Streamline client.
-func NewClient(config Config) (*Client, error) {
-	if len(config.Brokers) == 0 {
-		return nil, fmt.Errorf("streamline: at least one broker address is required")
-	}
-
+// buildSaramaConfig translates a Streamline Config into a Sarama config.
+// The config is expected to have defaults applied already (see withDefaults).
+func buildSaramaConfig(config Config) (*sarama.Config, error) {
 	saramaConfig := sarama.NewConfig()
 
 	// Basic configuration
@@ -212,6 +305,19 @@ func NewClient(config Config) (*Client, error) {
 	saramaConfig.Producer.Retry.Max = config.Producer.Retries
 	saramaConfig.Producer.Return.Successes = true
 	saramaConfig.Producer.Return.Errors = true
+
+	// Idempotent produces require full acknowledgement and a single in-flight
+	// request per broker connection.
+	if config.Producer.Idempotent {
+		if config.Producer.RequiredAcks != defaultRequiredAcks {
+			return nil, &StreamlineError{
+				Code:    ErrConfiguration,
+				Message: "idempotent producer requires Producer.RequiredAcks to be -1 (all replicas)",
+				Hint:    "Set Producer.RequiredAcks to -1, or leave it unset to use the default",
+			}
+		}
+		saramaConfig.Net.MaxOpenRequests = 1
+	}
 
 	// Consumer configuration
 	if config.Consumer.AutoOffsetReset == "earliest" {
@@ -248,6 +354,79 @@ func NewClient(config Config) (*Client, error) {
 		}
 	}
 
+	if err := validateTLSConfig(config.TLS); err != nil {
+		return nil, err
+	}
+
+	// TLS configuration
+	if config.TLS != nil && config.TLS.Enable {
+		tlsConfig, err := buildTLSConfig(config.TLS)
+		if err != nil {
+			return nil, err
+		}
+		saramaConfig.Net.TLS.Enable = true
+		saramaConfig.Net.TLS.Config = tlsConfig
+	}
+
+	return saramaConfig, nil
+}
+
+func buildTLSConfig(config *TLSConfig) (*tls.Config, error) {
+	if err := validateTLSConfig(config); err != nil {
+		return nil, err
+	}
+
+	tlsConfig := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: config.InsecureSkipVerify, //nolint:gosec // Explicit SDK option.
+	}
+
+	if config.CAFile != "" {
+		caBytes, err := os.ReadFile(config.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("streamline: read TLS CA certificate: %w", err)
+		}
+		rootCAs, err := x509.SystemCertPool()
+		if err != nil {
+			rootCAs = x509.NewCertPool()
+		}
+		if !rootCAs.AppendCertsFromPEM(caBytes) {
+			return nil, &StreamlineError{
+				Code:    ErrConfiguration,
+				Message: fmt.Sprintf("TLS CA certificate is not valid PEM: %s", config.CAFile),
+			}
+		}
+		tlsConfig.RootCAs = rootCAs
+	}
+
+	if config.CertFile != "" {
+		certificate, err := tls.LoadX509KeyPair(config.CertFile, config.KeyFile)
+		if err != nil {
+			return nil, fmt.Errorf("streamline: load TLS client certificate: %w", err)
+		}
+		tlsConfig.Certificates = []tls.Certificate{certificate}
+	}
+
+	return tlsConfig, nil
+}
+
+// NewClient creates a new Streamline client.
+//
+// Invalid zero-valued Config fields receive safe defaults. Meaningful producer
+// zero values retain their Kafka semantics. Start from DefaultConfig to use all
+// recommended SDK defaults.
+func NewClient(config Config) (*Client, error) {
+	if len(config.Brokers) == 0 {
+		return nil, fmt.Errorf("streamline: at least one broker address is required")
+	}
+
+	config = config.withDefaults()
+
+	saramaConfig, err := buildSaramaConfig(config)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create sarama client
 	client, err := sarama.NewClient(config.Brokers, saramaConfig)
 	if err != nil {
@@ -266,17 +445,23 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	// Initialize producer
-	c.Producer, err = newProducer(client, saramaConfig, c.circuitBreaker)
+	c.Producer, err = newProducer(client, c.circuitBreaker)
 	if err != nil {
-		client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return nil, fmt.Errorf("streamline: failed to create producer: %w", err)
 	}
 
 	// Initialize admin
 	c.Admin, err = newAdmin(client)
 	if err != nil {
-		c.Producer.Close()
-		client.Close()
+		if closeErr := c.Producer.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return nil, fmt.Errorf("streamline: failed to create admin client: %w", err)
 	}
 
@@ -341,23 +526,13 @@ func (c *Client) Close() error {
 	}
 	return nil
 }
-// extract config validation into helper
 
 // httpEndpoint returns the configured HTTP endpoint, falling back to the default.
 func (c *Client) httpEndpoint() string {
 	if c.config.HTTPEndpoint != "" {
 		return c.config.HTTPEndpoint
 	}
-	return "http://localhost:9094"
-}
-
-
-// validateResponse checks that a protocol response has valid structure.
-func validateResponse(data []byte) error {
-	if len(data) < 4 {
-		return fmt.Errorf("malformed response: expected at least 4 bytes, got %d", len(data))
-	}
-	return nil
+	return defaultHTTPEndpoint
 }
 
 // ── Moonshot: Agent Memory (M1) ────────────────────────────────────
@@ -366,7 +541,7 @@ func validateResponse(data []byte) error {
 type MemoryEntry struct {
 	AgentID    string   `json:"agent_id"`
 	Content    string   `json:"content"`
-	Kind       string   `json:"kind"`       // "fact", "observation", "preference", "procedure"
+	Kind       string   `json:"kind"` // "fact", "observation", "preference", "procedure"
 	Importance float64  `json:"importance"`
 	Tags       []string `json:"tags,omitempty"`
 	Namespace  string   `json:"namespace,omitempty"` // shared namespace for multi-agent memory
@@ -390,7 +565,7 @@ type MemoryHit struct {
 }
 
 // MemoryRemember stores a memory entry via the Streamline HTTP memory API.
-func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) error {
+func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) (err error) {
 	endpoint := c.httpEndpoint()
 
 	payload, err := json.Marshal(entry)
@@ -410,17 +585,20 @@ func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) error {
 	if err != nil {
 		return fmt.Errorf("streamline: remember request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close remember response body") }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("streamline: remember failed (HTTP %d) and response body could not be read: %w", resp.StatusCode, readErr)
+		}
 		return fmt.Errorf("streamline: remember failed (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 	return nil
 }
 
 // MemoryRecall retrieves memories by semantic similarity via the Streamline HTTP memory API.
-func (c *Client) MemoryRecall(ctx context.Context, query MemoryQuery) ([]MemoryHit, error) {
+func (c *Client) MemoryRecall(ctx context.Context, query MemoryQuery) (_ []MemoryHit, err error) {
 	endpoint := c.httpEndpoint()
 
 	if query.K == 0 {
@@ -444,7 +622,7 @@ func (c *Client) MemoryRecall(ctx context.Context, query MemoryQuery) ([]MemoryH
 	if err != nil {
 		return nil, fmt.Errorf("streamline: recall request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close recall response body") }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

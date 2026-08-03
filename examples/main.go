@@ -13,6 +13,14 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run holds the example body so deferred cleanup still runs when it fails:
+// log.Fatal in main would skip every pending defer.
+func run() error {
 	// Create client with default configuration
 	config := streamline.DefaultConfig()
 	brokers := os.Getenv("STREAMLINE_BOOTSTRAP_SERVERS")
@@ -23,32 +31,35 @@ func main() {
 
 	client, err := streamline.NewClient(config)
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Printf("Failed to close client: %v", closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
 	// Create a topic
 	fmt.Println("Creating topic...")
-	err = client.Admin.CreateTopic(ctx, streamline.TopicConfig{
+	if createErr := client.Admin.CreateTopic(ctx, streamline.TopicConfig{
 		Name:              "example-topic",
 		NumPartitions:     3,
 		ReplicationFactor: 1,
-	})
-	if err != nil {
-		log.Printf("Warning: failed to create topic (may already exist): %v", err)
+	}); createErr != nil {
+		log.Printf("Warning: failed to create topic (may already exist): %v", createErr)
 	}
 
 	// Produce messages
 	fmt.Println("Producing messages...")
 	for i := 0; i < 10; i++ {
-		result, err := client.Producer.Send(ctx, "example-topic",
+		result, sendErr := client.Producer.Send(ctx, "example-topic",
 			[]byte(fmt.Sprintf("key-%d", i)),
 			[]byte(fmt.Sprintf("Hello, Streamline! Message %d", i)),
 		)
-		if err != nil {
-			log.Printf("Failed to send message: %v", err)
+		if sendErr != nil {
+			log.Printf("Failed to send message: %v", sendErr)
 			continue
 		}
 		fmt.Printf("Produced message to partition %d at offset %d\n",
@@ -61,7 +72,7 @@ func main() {
 		Key:   []byte("with-headers"),
 		Value: []byte("Message with headers"),
 		Headers: map[string][]byte{
-			"trace-id":    []byte("abc123"),
+			"trace-id":     []byte("abc123"),
 			"content-type": []byte("application/json"),
 		},
 	})
@@ -76,16 +87,20 @@ func main() {
 	fmt.Println("Starting consumer...")
 	consumer, err := client.NewConsumer(ctx, "example-group", []string{"example-topic"})
 	if err != nil {
-		log.Fatalf("Failed to create consumer: %v", err)
+		return fmt.Errorf("failed to create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() {
+		if closeErr := consumer.Close(); closeErr != nil {
+			log.Printf("Failed to close consumer: %v", closeErr)
+		}
+	}()
 
 	// Set up signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 
 	// Start consuming
-	messages, errors := consumer.Start(ctx)
+	messages, consumerErrs := consumer.Start(ctx)
 
 	fmt.Println("Consuming messages (press Ctrl+C to stop)...")
 	timeout := time.After(10 * time.Second)
@@ -94,21 +109,21 @@ func main() {
 		select {
 		case msg, ok := <-messages:
 			if !ok {
-				return
+				return nil
 			}
 			fmt.Printf("Received: topic=%s partition=%d offset=%d key=%s value=%s\n",
 				msg.Topic, msg.Partition, msg.Offset, string(msg.Key), string(msg.Value))
 			if len(msg.Headers) > 0 {
 				fmt.Printf("  Headers: %v\n", msg.Headers)
 			}
-		case err := <-errors:
-			log.Printf("Consumer error: %v", err)
+		case consumeErr := <-consumerErrs:
+			log.Printf("Consumer error: %v", consumeErr)
 		case <-sigChan:
 			fmt.Println("\nShutting down...")
-			return
+			return nil
 		case <-timeout:
 			fmt.Println("\nTimeout reached")
-			return
+			return nil
 		}
 	}
 }

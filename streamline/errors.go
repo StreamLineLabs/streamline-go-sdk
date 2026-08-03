@@ -194,7 +194,7 @@ func NewConfigurationError(message string) *StreamlineError {
 }
 
 // NewContractViolationError creates a contract violation error.
-func NewContractViolationError(topic string, details string) *StreamlineError {
+func NewContractViolationError(topic, details string) *StreamlineError {
 	return &StreamlineError{
 		Code:      ErrContractViolation,
 		Message:   fmt.Sprintf("contract violation on topic '%s': %s", topic, details),
@@ -224,7 +224,7 @@ func NewMemoryAccessDeniedError(agent string) *StreamlineError {
 }
 
 // NewBranchQuotaExceededError creates a branch quota exceeded error.
-func NewBranchQuotaExceededError(branch string, details string) *StreamlineError {
+func NewBranchQuotaExceededError(branch, details string) *StreamlineError {
 	return &StreamlineError{
 		Code:      ErrBranchQuotaExceeded,
 		Message:   fmt.Sprintf("branch quota exceeded for '%s': %s", branch, details),

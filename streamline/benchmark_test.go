@@ -224,12 +224,12 @@ func BenchmarkAdminConfig(b *testing.B) {
 				NumPartitions:     12,
 				ReplicationFactor: 3,
 				Config: map[string]string{
-					"retention.ms":          "86400000",
-					"cleanup.policy":        "compact",
-					"min.insync.replicas":   "2",
-					"max.message.bytes":     "1048576",
-					"segment.bytes":         "1073741824",
-					"compression.type":      "zstd",
+					"retention.ms":        "86400000",
+					"cleanup.policy":      "compact",
+					"min.insync.replicas": "2",
+					"max.message.bytes":   "1048576",
+					"segment.bytes":       "1073741824",
+					"compression.type":    "zstd",
 				},
 			}
 		}
@@ -613,4 +613,5 @@ func BenchmarkScramClient(b *testing.B) {
 		})
 	})
 }
+
 // TODO: add TestMain setup for integration tests

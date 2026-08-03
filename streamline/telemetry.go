@@ -50,7 +50,7 @@ func (c HeaderCarrier) Get(key string) string {
 }
 
 // Set sets a key-value pair.
-func (c HeaderCarrier) Set(key string, value string) {
+func (c HeaderCarrier) Set(key, value string) {
 	c[key] = []byte(value)
 }
 
@@ -222,7 +222,7 @@ func NewTracingConsumer(consumer *Consumer) *TracingConsumer {
 }
 
 // Start begins consuming with tracing on the consumer loop.
-func (tc *TracingConsumer) Start(ctx context.Context) (<-chan *ConsumerMessage, <-chan error) {
+func (tc *TracingConsumer) Start(ctx context.Context) (messages <-chan *ConsumerMessage, errs <-chan error) {
 	topics := tc.inner.Topics()
 	topicStr := "unknown"
 	if len(topics) > 0 {

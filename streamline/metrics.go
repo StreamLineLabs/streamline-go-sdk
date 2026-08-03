@@ -43,7 +43,7 @@ func NewClientMetrics() *ClientMetrics {
 }
 
 // RecordProduce records a successful produce operation.
-func (m *ClientMetrics) RecordProduce(messageCount int64, bytes int64, latencyMs float64) {
+func (m *ClientMetrics) RecordProduce(messageCount, bytes int64, latencyMs float64) {
 	m.messagesProduced.Add(messageCount)
 	m.bytesSent.Add(bytes)
 	m.mu.Lock()
@@ -53,7 +53,7 @@ func (m *ClientMetrics) RecordProduce(messageCount int64, bytes int64, latencyMs
 }
 
 // RecordConsume records a successful consume operation.
-func (m *ClientMetrics) RecordConsume(messageCount int64, bytes int64, latencyMs float64) {
+func (m *ClientMetrics) RecordConsume(messageCount, bytes int64, latencyMs float64) {
 	m.messagesConsumed.Add(messageCount)
 	m.bytesReceived.Add(bytes)
 	m.mu.Lock()

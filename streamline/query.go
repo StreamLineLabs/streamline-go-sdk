@@ -67,7 +67,7 @@ func (c *QueryClient) Query(ctx context.Context, sql string) (*QueryResult, erro
 }
 
 // QueryWithOptions executes a SQL query with custom timeout and row limit.
-func (c *QueryClient) QueryWithOptions(ctx context.Context, sql string, opts QueryOptions) (*QueryResult, error) {
+func (c *QueryClient) QueryWithOptions(ctx context.Context, sql string, opts QueryOptions) (_ *QueryResult, err error) {
 	if sql == "" {
 		return nil, NewConfigurationError("SQL query cannot be empty")
 	}
@@ -97,7 +97,7 @@ func (c *QueryClient) QueryWithOptions(ctx context.Context, sql string, opts Que
 	if err != nil {
 		return nil, NewConnectionError(fmt.Sprintf("query request failed: %s", err), err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close query response body") }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -123,7 +123,7 @@ func (c *QueryClient) QueryWithOptions(ctx context.Context, sql string, opts Que
 }
 
 // Explain returns the query execution plan without running the query.
-func (c *QueryClient) Explain(ctx context.Context, sql string) (string, error) {
+func (c *QueryClient) Explain(ctx context.Context, sql string) (_ string, err error) {
 	if sql == "" {
 		return "", NewConfigurationError("SQL query cannot be empty")
 	}
@@ -151,7 +151,7 @@ func (c *QueryClient) Explain(ctx context.Context, sql string) (string, error) {
 	if err != nil {
 		return "", NewConnectionError(fmt.Sprintf("explain request failed: %s", err), err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close explain response body") }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

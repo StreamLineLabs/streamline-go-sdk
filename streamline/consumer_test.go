@@ -127,12 +127,7 @@ func TestConsumerStartWhenClosed(t *testing.T) {
 	msgCh, errCh := c.Start(context.Background())
 
 	// Should get an error from the error channel
-	select {
-	case err, ok := <-errCh:
-		if !ok {
-			// channel closed, check if we got the error
-			break
-		}
+	if err, ok := <-errCh; ok {
 		if err == nil {
 			t.Error("expected non-nil error")
 		} else if err.Error() != "streamline: consumer is closed" {

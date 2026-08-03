@@ -3,6 +3,7 @@ package streamline_test
 import (
 	"context"
 	"net/http"
+	"os"
 	"testing"
 	"time"
 
@@ -10,9 +11,18 @@ import (
 )
 
 func TestStreamlineContainer(t *testing.T) {
-	ctx := context.Background()
+	if os.Getenv("STREAMLINE_TESTCONTAINERS_INTEGRATION") != "1" {
+		t.Skip("set STREAMLINE_TESTCONTAINERS_INTEGRATION=1 to run Docker integration")
+	}
 
-	container, err := streamline.RunContainer(ctx, streamline.WithDebugLogging())
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	options := []streamline.ContainerOption{streamline.WithDebugLogging()}
+	if image := os.Getenv("STREAMLINE_TEST_IMAGE"); image != "" {
+		options = append(options, streamline.WithImage(image))
+	}
+	container, err := streamline.RunContainer(ctx, options...)
 	if err != nil {
 		t.Fatalf("failed to start container: %v", err)
 	}

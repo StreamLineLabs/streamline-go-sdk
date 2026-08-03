@@ -1,11 +1,19 @@
+//go:build integration
+
 package streamline_test
 
 // SDK Conformance Test Suite — 46 tests per SDK_CONFORMANCE_SPEC.md
 //
-// Requires: docker compose -f docker-compose.test.yml up -d
+// These tests talk to a live Streamline server, so they are compiled only with
+// the "integration" build tag and are never part of `go test ./...`:
 //
-// Set STREAMLINE_BOOTSTRAP and STREAMLINE_HTTP env vars to override defaults.
-// Run with -short to skip integration tests that require a running server.
+//	docker compose -f docker-compose.test.yml up -d
+//	go test -tags=integration -timeout 120s ./...
+//
+// Set STREAMLINE_BOOTSTRAP and STREAMLINE_HTTP to override the default
+// localhost endpoints, STREAMLINE_SKIP_INTEGRATION=1 (or -short) to skip the
+// suite even when it is compiled in, and STREAMLINE_AUTH_ENABLED=true to run
+// the authentication tests.
 
 import (
 	"context"
@@ -21,17 +29,11 @@ import (
 )
 
 func bootstrap() string {
-	if v := os.Getenv("STREAMLINE_BOOTSTRAP"); v != "" {
-		return v
-	}
-	return "localhost:9092"
+	return IntegrationBootstrap()
 }
 
 func httpURL() string {
-	if v := os.Getenv("STREAMLINE_HTTP"); v != "" {
-		return v
-	}
-	return "http://localhost:9094"
+	return IntegrationHTTPURL()
 }
 
 func uniqueTopic(prefix string) string {
@@ -40,16 +42,14 @@ func uniqueTopic(prefix string) string {
 
 func newClient(t *testing.T) *streamline.Client {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
+
 	cfg := streamline.Config{
 		Brokers: []string{bootstrap()},
 	}
 	client, err := streamline.NewClient(cfg)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
-
 	}
 	return client
 }
@@ -808,18 +808,15 @@ func TestA06_AuthFailure(t *testing.T) {
 
 // ========== SCHEMA REGISTRY (6 tests) ==========
 
-const schemaRegistryURL = "http://localhost:9094"
 const avroSchema = `{"type":"record","name":"User","fields":[{"name":"id","type":"int"},{"name":"name","type":"string"}]}`
 const jsonSchema = `{"type":"object","properties":{"id":{"type":"integer"},"name":{"type":"string"}},"required":["id","name"]}`
 
 func schemaClient() *streamline.SchemaRegistryClient {
-	return streamline.NewSchemaRegistryClient(schemaRegistryURL)
+	return streamline.NewSchemaRegistryClient(httpURL())
 }
 
 func TestS01_RegisterSchema(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	id, err := client.RegisterSchema("test-s01-value", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -831,9 +828,7 @@ func TestS01_RegisterSchema(t *testing.T) {
 }
 
 func TestS02_GetByID(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	id, err := client.RegisterSchema("test-s02-value", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -849,9 +844,7 @@ func TestS02_GetByID(t *testing.T) {
 }
 
 func TestS03_GetVersions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	_, err := client.RegisterSchema("test-s03-value", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -867,9 +860,7 @@ func TestS03_GetVersions(t *testing.T) {
 }
 
 func TestS04_CompatibilityCheck(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	_, err := client.RegisterSchema("test-s04-value", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -883,9 +874,7 @@ func TestS04_CompatibilityCheck(t *testing.T) {
 }
 
 func TestS05_AvroSchema(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	id, err := client.RegisterSchema("test-s05-avro", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -901,9 +890,7 @@ func TestS05_AvroSchema(t *testing.T) {
 }
 
 func TestS06_JSONSchema(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	id, err := client.RegisterSchema("test-s06-json", jsonSchema, streamline.SchemaTypeJSON)
 	if err != nil {
@@ -1149,9 +1136,7 @@ func TestF02_LatencyP99(t *testing.T) {
 }
 
 func TestF03_StartupTime(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	start := time.Now()
 	cfg := streamline.Config{Brokers: []string{bootstrap()}}
 	client, err := streamline.NewClient(cfg)

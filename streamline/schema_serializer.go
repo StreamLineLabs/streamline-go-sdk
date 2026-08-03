@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"sync"
 	"time"
 )
@@ -47,10 +48,15 @@ func NewSchemaSerializer(registry *SchemaRegistryClient, opts ...SchemaSerialize
 
 // Serialize marshals value as JSON and prepends the wire format header.
 // The subject and schema are used to look up (or register) the schema ID.
-func (s *SchemaSerializer) Serialize(subject string, schema string, schemaType SchemaType, value interface{}) ([]byte, error) {
+func (s *SchemaSerializer) Serialize(subject, schema string, schemaType SchemaType, value interface{}) ([]byte, error) {
 	id, err := s.resolveSchemaID(subject, schema, schemaType)
 	if err != nil {
 		return nil, fmt.Errorf("streamline: resolve schema ID: %w", err)
+	}
+	// The registry is a remote service, so its ID is range-checked before it
+	// is narrowed into the 4-byte wire format header.
+	if id < 0 || id > math.MaxInt32 {
+		return nil, fmt.Errorf("streamline: schema ID %d for subject %q does not fit the 4-byte wire format header", id, subject)
 	}
 
 	payload, err := json.Marshal(value)

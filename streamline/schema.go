@@ -43,7 +43,7 @@ func NewSchemaRegistryClient(baseURL string) *SchemaRegistryClient {
 }
 
 // RegisterSchema registers a schema under the given subject and returns the schema ID.
-func (c *SchemaRegistryClient) RegisterSchema(subject, schema string, schemaType SchemaType) (int, error) {
+func (c *SchemaRegistryClient) RegisterSchema(subject, schema string, schemaType SchemaType) (_ int, err error) {
 	payload := map[string]string{
 		"schema":     schema,
 		"schemaType": string(schemaType),
@@ -58,7 +58,7 @@ func (c *SchemaRegistryClient) RegisterSchema(subject, schema string, schemaType
 	if err != nil {
 		return 0, fmt.Errorf("register schema: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -79,13 +79,13 @@ func (c *SchemaRegistryClient) RegisterSchema(subject, schema string, schemaType
 }
 
 // GetSchema retrieves a schema by its global ID.
-func (c *SchemaRegistryClient) GetSchema(id int) (*SchemaInfo, error) {
+func (c *SchemaRegistryClient) GetSchema(id int) (_ *SchemaInfo, err error) {
 	url := fmt.Sprintf("%s/schemas/ids/%d", c.baseURL, id)
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("get schema: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -107,13 +107,13 @@ func (c *SchemaRegistryClient) GetSchema(id int) (*SchemaInfo, error) {
 }
 
 // GetVersions returns all version numbers registered under a subject.
-func (c *SchemaRegistryClient) GetVersions(subject string) ([]int, error) {
+func (c *SchemaRegistryClient) GetVersions(subject string) (_ []int, err error) {
 	url := fmt.Sprintf("%s/subjects/%s/versions", c.baseURL, subject)
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("get versions: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -135,7 +135,7 @@ func (c *SchemaRegistryClient) GetVersions(subject string) ([]int, error) {
 }
 
 // CheckCompatibility checks if a schema is compatible with the latest version under a subject.
-func (c *SchemaRegistryClient) CheckCompatibility(subject, schema string, schemaType SchemaType) (bool, error) {
+func (c *SchemaRegistryClient) CheckCompatibility(subject, schema string, schemaType SchemaType) (_ bool, err error) {
 	payload := map[string]string{
 		"schema":     schema,
 		"schemaType": string(schemaType),
@@ -150,7 +150,7 @@ func (c *SchemaRegistryClient) CheckCompatibility(subject, schema string, schema
 	if err != nil {
 		return false, fmt.Errorf("compatibility check: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -174,13 +174,13 @@ func (c *SchemaRegistryClient) CheckCompatibility(subject, schema string, schema
 }
 
 // GetSubjects returns all registered subjects.
-func (c *SchemaRegistryClient) GetSubjects() ([]string, error) {
+func (c *SchemaRegistryClient) GetSubjects() (_ []string, err error) {
 	url := fmt.Sprintf("%s/subjects", c.baseURL)
 	resp, err := c.httpClient.Get(url)
 	if err != nil {
 		return nil, fmt.Errorf("get subjects: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -199,9 +199,9 @@ func (c *SchemaRegistryClient) GetSubjects() ([]string, error) {
 }
 
 // DeleteSubject deletes a subject and all its schema versions.
-func (c *SchemaRegistryClient) DeleteSubject(subject string) ([]int, error) {
+func (c *SchemaRegistryClient) DeleteSubject(subject string) (_ []int, err error) {
 	url := fmt.Sprintf("%s/subjects/%s", c.baseURL, subject)
-	req, err := http.NewRequest(http.MethodDelete, url, nil)
+	req, err := http.NewRequest(http.MethodDelete, url, http.NoBody)
 	if err != nil {
 		return nil, fmt.Errorf("create request: %w", err)
 	}
@@ -210,7 +210,7 @@ func (c *SchemaRegistryClient) DeleteSubject(subject string) ([]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("delete subject: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {

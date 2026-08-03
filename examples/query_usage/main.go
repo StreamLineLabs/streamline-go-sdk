@@ -8,7 +8,8 @@
 //   - go get github.com/streamlinelabs/streamline-go-sdk
 //
 // Run:
-//   go run examples/query_usage/main.go
+//
+//	go run examples/query_usage/main.go
 package main
 
 import (
@@ -21,6 +22,14 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run holds the example body so deferred cleanup still runs when it fails:
+// log.Fatal in main would skip every pending defer.
+func run() error {
 	bootstrap := os.Getenv("STREAMLINE_BOOTSTRAP")
 	if bootstrap == "" {
 		bootstrap = "localhost:9092"
@@ -35,24 +44,28 @@ func main() {
 	cfg.Brokers = []string{bootstrap}
 	client, err := streamline.NewClient(cfg)
 	if err != nil {
-		log.Fatalf("create client: %v", err)
+		return fmt.Errorf("create client: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Printf("close client: %v", closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
-	if err := client.Admin.CreateTopic(ctx, streamline.TopicConfig{
+	if createErr := client.Admin.CreateTopic(ctx, streamline.TopicConfig{
 		Name:              "events",
 		NumPartitions:     1,
 		ReplicationFactor: 1,
-	}); err != nil {
-		log.Printf("create topic (may already exist): %v", err)
+	}); createErr != nil {
+		log.Printf("create topic (may already exist): %v", createErr)
 	}
 
 	for i := 0; i < 10; i++ {
 		msg := fmt.Sprintf(`{"user":"user-%d","action":"click","value":%d}`, i, i*10)
-		if _, err := client.Producer.Send(ctx, "events", nil, []byte(msg)); err != nil {
-			log.Fatalf("produce: %v", err)
+		if _, sendErr := client.Producer.Send(ctx, "events", nil, []byte(msg)); sendErr != nil {
+			return fmt.Errorf("produce: %w", sendErr)
 		}
 	}
 	fmt.Println("Produced 10 events")
@@ -64,7 +77,7 @@ func main() {
 	fmt.Println("\n--- All events (limit 5) ---")
 	result, err := queryClient.Query(ctx, "SELECT * FROM topic('events') LIMIT 5")
 	if err != nil {
-		log.Fatalf("query: %v", err)
+		return fmt.Errorf("query: %w", err)
 	}
 	fmt.Printf("Columns: %d, Rows: %d\n", len(result.Columns), len(result.Rows))
 	for _, row := range result.Rows {
@@ -75,7 +88,7 @@ func main() {
 	fmt.Println("\n--- Count by action ---")
 	result, err = queryClient.Query(ctx, "SELECT action, COUNT(*) as cnt FROM topic('events') GROUP BY action")
 	if err != nil {
-		log.Fatalf("query: %v", err)
+		return fmt.Errorf("aggregate query: %w", err)
 	}
 	for _, row := range result.Rows {
 		fmt.Printf("  %v\n", row)
@@ -90,7 +103,7 @@ func main() {
 		opts,
 	)
 	if err != nil {
-		log.Fatalf("query: %v", err)
+		return fmt.Errorf("query with options: %w", err)
 	}
 	fmt.Printf("Returned %d rows\n", len(result.Rows))
 
@@ -98,7 +111,9 @@ func main() {
 	fmt.Println("\n--- Explain query plan ---")
 	plan, err := queryClient.Explain(ctx, "SELECT * FROM topic('events') LIMIT 10")
 	if err != nil {
-		log.Fatalf("explain: %v", err)
+		return fmt.Errorf("explain: %w", err)
 	}
 	fmt.Println(plan)
+
+	return nil
 }

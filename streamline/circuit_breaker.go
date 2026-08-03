@@ -64,10 +64,10 @@ type CircuitBreaker struct {
 	config CircuitBreakerConfig
 	state  CircuitState
 
-	failureCount   int
-	successCount   int
-	halfOpenCount  int
-	lastFailureAt  time.Time
+	failureCount    int
+	successCount    int
+	halfOpenCount   int
+	lastFailureAt   time.Time
 	lastStateChange time.Time
 }
 

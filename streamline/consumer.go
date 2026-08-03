@@ -111,7 +111,7 @@ func newConsumer(client sarama.Client, config *sarama.Config, groupID string, to
 
 // Start begins consuming messages.
 // Returns a channel of messages and a channel of errors.
-func (c *Consumer) Start(ctx context.Context) (<-chan *ConsumerMessage, <-chan error) {
+func (c *Consumer) Start(ctx context.Context) (messages <-chan *ConsumerMessage, errs <-chan error) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
@@ -286,7 +286,7 @@ func (c *Consumer) Close() error {
 // The search request is sent to POST /api/v1/topics/{topic}/search on the
 // Streamline HTTP API. The endpoint is determined by the HTTPEndpoint
 // configuration provided when the client was created.
-func (c *Consumer) Search(ctx context.Context, topic, query string, k int) ([]SearchResult, error) {
+func (c *Consumer) Search(ctx context.Context, topic, query string, k int) (_ []SearchResult, err error) {
 	if len(c.topics) == 0 && topic == "" {
 		return nil, fmt.Errorf("streamline: topic is required for search")
 	}
@@ -316,7 +316,7 @@ func (c *Consumer) Search(ctx context.Context, topic, query string, k int) ([]Se
 	if err != nil {
 		return nil, fmt.Errorf("streamline: search request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close search response body") }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -391,4 +391,3 @@ func (h *consumerGroupHandler) ConsumeClaim(session sarama.ConsumerGroupSession,
 		}
 	}
 }
-

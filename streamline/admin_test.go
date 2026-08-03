@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -33,8 +34,8 @@ func TestTopicConfig(t *testing.T) {
 				NumPartitions:     12,
 				ReplicationFactor: 3,
 				Config: map[string]string{
-					"retention.ms":    "86400000",
-					"cleanup.policy":  "delete",
+					"retention.ms":     "86400000",
+					"cleanup.policy":   "delete",
 					"compression.type": "lz4",
 				},
 			},
@@ -453,7 +454,7 @@ func TestAdminCreateTopicValidatesName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := a.CreateTopic(nil, TopicConfig{Name: tt.topic, NumPartitions: 1, ReplicationFactor: 1})
+			err := a.CreateTopic(context.Background(), TopicConfig{Name: tt.topic, NumPartitions: 1, ReplicationFactor: 1})
 			if (err != nil) != tt.wantErr {
 				t.Errorf("CreateTopic(%q) error = %v, wantErr %v", tt.topic, err, tt.wantErr)
 			}
@@ -476,7 +477,7 @@ func TestAdminDeleteTopicValidatesName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := a.DeleteTopic(nil, tt.topic)
+			err := a.DeleteTopic(context.Background(), tt.topic)
 			if (err != nil) != tt.wantErr {
 				t.Errorf("DeleteTopic(%q) error = %v, wantErr %v", tt.topic, err, tt.wantErr)
 			}
@@ -636,5 +637,29 @@ func TestHTTPAdmin_ServerError(t *testing.T) {
 	_, err := admin.ClusterInfo(context.Background())
 	if err == nil {
 		t.Fatal("expected error for 500 response")
+	}
+}
+
+// TestHTTPAdmin_ServerErrorIncludesBody keeps the response body in the error so
+// callers can see what the server actually reported.
+func TestHTTPAdmin_ServerErrorIncludesBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		if _, err := w.Write([]byte(`{"error":"topic not found"}`)); err != nil {
+			t.Errorf("write response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	admin := NewHTTPAdmin(srv.URL)
+	_, err := admin.ConsumerGroupLag(context.Background(), "group")
+	if err == nil {
+		t.Fatal("expected an error for a 400 response")
+	}
+	if !strings.Contains(err.Error(), "topic not found") {
+		t.Errorf("error = %q, want it to include the response body", err)
+	}
+	if !strings.Contains(err.Error(), "400") {
+		t.Errorf("error = %q, want it to include the HTTP status code", err)
 	}
 }
