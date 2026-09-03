@@ -45,7 +45,7 @@ body:
     id: lang-version
     attributes:
       label: Go Version
-      placeholder: "e.g., 1.21"
+      placeholder: "e.g., 1.25.14"
     validations:
       required: true
   - type: input

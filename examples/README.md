@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Go 1.22+
+- Go 1.25.14+ with current security patches
 - A running Streamline server (default: `localhost:9092`)
 
 ## Running
@@ -31,4 +31,3 @@ Set `STREAMLINE_BOOTSTRAP_SERVERS` to connect to a non-local server:
 export STREAMLINE_BOOTSTRAP_SERVERS=my-server:9092
 go run examples/main.go
 ```
-

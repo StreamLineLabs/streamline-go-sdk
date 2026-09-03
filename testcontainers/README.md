@@ -5,6 +5,8 @@
 
 Testcontainers module for [Streamline](https://github.com/streamlinelabs/streamline) — **5x faster** than Kafka containers (~1s vs ~15s startup).
 
+Requires Go 1.26.0 or later. Use Go 1.26.6 or a newer patched release.
+
 ## Features
 
 - Kafka-compatible container for testing

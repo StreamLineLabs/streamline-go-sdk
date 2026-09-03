@@ -8,48 +8,79 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7.0.0
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
 
       - run: go build ./...
       - run: go vet ./...
-      - name: Verify Testcontainers module
-        run: |
-          cd testcontainers
-          go build ./...
-          go vet ./...
-          go test ./...
       - name: Verify examples compile
-        run: |
-          for dir in examples/*/; do
-            echo "Checking $dir..."
-            (cd "$dir" && go build ./...)
-          done
+        run: go build ./examples/...
       - name: Run unit tests
         run: go test -short ./...
 
       - name: Verify build tag variants
         run: |
           go vet -tags integration ./...
-          CGO_ENABLED=1 go build -tags embedded ./...
+          # Native embedded mode requires an external libstreamline install.
+          # This verifies the explicitly supported CGO-disabled fallback.
+          CGO_ENABLED=0 go build -tags embedded ./...
 
       - name: Lint
-        uses: golangci/golangci-lint-action@v8
+        uses: golangci/golangci-lint-action@v9.3.0
         with:
-          version: latest
+          version: v2.13.2
+
+      - name: Set up patched Go for Testcontainers module
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: "1.26.6"
+          cache-dependency-path: testcontainers/go.sum
+
+      - name: Verify Testcontainers module
+        run: |
+          cd testcontainers
+          go mod verify
+          go build ./...
+          go vet ./...
+          go test ./...
+
+  vulnerability-scan:
+    name: govulncheck (${{ matrix.module }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: "."
+            go-version: "1.25.14"
+            cache-file: go.sum
+          - module: testcontainers
+            go-version: "1.26.6"
+            cache-file: testcontainers/go.sum
+    steps:
+      - uses: actions/checkout@v4.4.0
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache-dependency-path: ${{ matrix.cache-file }}
+
+      - name: Run pinned govulncheck
+        working-directory: ${{ matrix.module }}
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
 
   conformance:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.4.0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7.0.0
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
 
       - name: Start Streamline server
         run: docker compose -f docker-compose.test.yml up -d --wait
@@ -73,6 +104,7 @@ jobs:
         env:
           STREAMLINE_BOOTSTRAP: localhost:9092
           STREAMLINE_HTTP: http://localhost:9094
+          STREAMLINE_REQUIRE_INTEGRATION: "true"
 
       - name: Stop Streamline server
         if: always()

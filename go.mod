@@ -1,6 +1,6 @@
 module github.com/streamlinelabs/streamline-go-sdk
 
-go 1.22
+go 1.25.14
 
 require (
 	github.com/IBM/sarama v1.43.0
@@ -31,11 +31,7 @@ require (
 	github.com/xdg-go/pbkdf2 v1.0.0 // indirect
 	github.com/xdg-go/stringprep v1.0.4 // indirect
 	go.opentelemetry.io/otel/metric v1.24.0 // indirect
-	golang.org/x/crypto v0.21.0 // indirect
-	golang.org/x/net v0.22.0 // indirect
-	golang.org/x/text v0.14.0 // indirect
+	golang.org/x/crypto v0.51.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/text v0.39.0 // indirect
 )
-
-// Release automation configured
-
-// Updated dependency versions for v0.2.0

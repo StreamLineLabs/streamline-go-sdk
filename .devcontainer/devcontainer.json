@@ -1,6 +1,6 @@
 {
   "name": "Streamline Go SDK",
-  "image": "mcr.microsoft.com/devcontainers/go:1.22",
+  "image": "mcr.microsoft.com/devcontainers/go:1.26",
 
   "features": {
     "ghcr.io/devcontainers/features/docker-in-docker:2": {},

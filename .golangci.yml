@@ -3,8 +3,8 @@
 version: "2"
 
 run:
-  timeout: 5m
-  go: "1.22"
+  timeout: 10m
+  go: "1.25"
   # Lint the live-server conformance suite as well; it sits behind the
   # "integration" build tag and is not part of `go test ./...`.
   build-tags:
