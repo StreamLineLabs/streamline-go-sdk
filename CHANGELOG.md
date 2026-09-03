@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
+- Corrected prominent README examples to use the actual producer field,
+  buffered transaction return values, verifier constructor, and experimental
+  Moonshot clients; added compile-only Go examples for stable, experimental,
+  embedded, and Testcontainers APIs
+- Authentication conformance now requires explicit modes and fixture inputs,
+  removes hard-coded credentials and empty TLS configs, and fails instead of
+  skipping when enabled infrastructure is missing
+- Updated root `golang.org/x/net`, `x/text`, and `x/crypto` dependencies and the
+  nested Testcontainers dependency graph to clear reachable `govulncheck`
+  findings. The nested module now uses `golang.org/x/crypto@v0.56.0`, resolving
+  GO-2026-6355 and GO-2026-6354 in the Testcontainers SSH transport.
+- Corrected the security contact and current supported release line, and split
+  general support from private vulnerability reporting
+- `SECURITY.md` now reports to `security@streamlinelabs.dev`, matching the
+  address used by every other repository in the organization, after an
+  earlier pass in this branch had drifted to a different domain
+- Removed the obsolete top-level `version` key from `docker-compose.test.yml`
+  so `docker compose` no longer warns that it is ignored
 - `NewClient` now applies the documented defaults to zero-valued `Config`
   fields, so a partial config such as `Config{Brokers: []string{"localhost:9092"}}`
   no longer fails with `kafka: invalid configuration (Net.DialTimeout must be > 0)`
@@ -44,6 +62,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the binaries produced by building each `examples/` directory
 
 ### Changed
+- Minimum Go version is now 1.25.14 for the root SDK. The nested
+  `testcontainers/` module requires Go 1.26.0 because the fixed `x/crypto`
+  release raised its minimum; CI and security scanning use patched Go 1.26.6
+- Release automation is now a `workflow_dispatch` promotion flow from `main`
+  instead of a tag-push trigger: promotion takes explicit `release_version`,
+  `release_tag`, and an immutable `server_image_digest` input, verifies the
+  selected commit is the current, reachable tip of `main`, runs the full
+  root/nested build/vet/test/examples/`govulncheck` suite, starts a
+  digest-pinned live server fixture and runs required conformance behind an
+  executed-test-count guard, and only then generates the source archive,
+  root/nested CycloneDX SBOMs, and checksums, signs and verifies them with
+  keyless Cosign, and creates build provenance attestations. Creating and
+  pushing the annotated tag and creating the GitHub release now happen in a
+  separate job gated behind a protected `release-promotion` GitHub
+  Environment, strictly after every check above has succeeded, so a tag is
+  never published before the checks that are meant to gate it. Existing
+  tag/version/changelog validation and the existing-release/tag-reuse guard
+  are preserved (and now covered by focused script tests under
+  `scripts/release/`)
+- Release conformance now forces `go test -count=1`, and its executed-test
+  guard rejects any `(cached)` package output. The regular integration
+  workflow likewise requires the `STREAMLINE_INTEGRATION_IMAGE` repository
+  variable to contain an immutable `repository@sha256` reference, validates
+  the pulled digest, and has no mutable image-tag fallback.
+- Dependabot and pinned `govulncheck` coverage now include the root and nested
+  Testcontainers modules
 - The `embedded` package requires the `embedded` build tag and CGO. Default
   builds compile a stub whose operations return `embedded.ErrNotEnabled`, so
   `go build ./...` and `go test ./...` no longer need `libstreamline`

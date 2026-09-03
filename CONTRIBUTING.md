@@ -14,7 +14,9 @@ Thank you for your interest in contributing to the Streamline Go SDK! This guide
 
 ## Prerequisites
 
-- Go 1.21 or later
+- Go 1.25.14 or later, with current security patches, for the root SDK
+- Go 1.26.0 or later for the nested `testcontainers/` module; use Go 1.26.6 or
+  a newer patched release
 
 ## Development Setup
 
@@ -30,6 +32,10 @@ go mod download
 go build ./...
 
 # Run tests
+go test ./...
+
+# Verify the nested module
+cd testcontainers
 go test ./...
 ```
 
@@ -51,6 +57,12 @@ go test -race ./...
 # Run with coverage
 go test -coverprofile=coverage.out ./...
 go tool cover -html=coverage.out
+
+# Compile all documented examples
+make examples
+
+# Scan both modules for reachable vulnerabilities
+make vuln
 ```
 
 ### Integration Tests

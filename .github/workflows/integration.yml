@@ -12,31 +12,48 @@ on:
 jobs:
   integration:
     runs-on: ubuntu-latest
-    services:
-      streamline:
-        image: ghcr.io/streamlinelabs/streamline:latest
-        ports:
-          - 9092:9092
-          - 9094:9094
-        options: >-
-          --health-cmd "curl -f http://localhost:9094/health || exit 1"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
+    env:
+      # Repository administrators must configure this Actions variable as an
+      # immutable repository@sha256 digest. There is deliberately no mutable
+      # tag fallback.
+      STREAMLINE_INTEGRATION_IMAGE: ${{ vars.STREAMLINE_INTEGRATION_IMAGE }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v4.4.0
+      - uses: actions/setup-go@v7.0.0
         with:
-          go-version: '1.22'
+          go-version-file: go.mod
+      - name: Validate and pull immutable integration image
+        shell: bash
+        run: |
+          set -euo pipefail
+          SERVER_IMAGE_DIGEST="$STREAMLINE_INTEGRATION_IMAGE" \
+            scripts/release/verify-server-image.sh
+      - name: Start digest-pinned Streamline fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d \
+            --name streamline-integration-fixture \
+            -p 9092:9092 \
+            -p 9094:9094 \
+            "$STREAMLINE_INTEGRATION_IMAGE"
       - name: Wait for Streamline
         run: |
           for i in $(seq 1 30); do
-            curl -sf http://localhost:9094/health && break
+            if curl -sf http://localhost:9094/health; then
+              exit 0
+            fi
             echo "Waiting for Streamline... ($i/30)"
             sleep 2
           done
+          echo "Streamline failed to become healthy"
+          exit 1
       - name: Run integration tests
         run: go test -v -count=1 -tags=integration -timeout 120s ./...
         env:
           STREAMLINE_BOOTSTRAP: localhost:9092
           STREAMLINE_HTTP: http://localhost:9094
+          STREAMLINE_REQUIRE_INTEGRATION: "true"
+      - name: Stop Streamline fixture
+        if: always()
+        run: docker rm -f streamline-integration-fixture || true
