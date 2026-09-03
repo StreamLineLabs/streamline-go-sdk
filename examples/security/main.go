@@ -4,8 +4,8 @@
 //
 // Run with:
 //
-//	SASL_USERNAME=admin SASL_PASSWORD=admin-secret go run examples/security/main.go
-//	SECURITY_MODE=scram SASL_USERNAME=admin SASL_PASSWORD=admin-secret go run examples/security/main.go
+//	SASL_USERNAME='<user>' SASL_PASSWORD='<password>' go run examples/security/main.go
+//	SECURITY_MODE=scram SASL_USERNAME='<user>' SASL_PASSWORD='<password>' go run examples/security/main.go
 //	SECURITY_MODE=tls CA_PATH=certs/ca.pem go run examples/security/main.go
 package main
 
@@ -22,12 +22,21 @@ func saslPlainExample() error {
 	fmt.Println("SASL/PLAIN Authentication")
 	fmt.Println("----------------------------------------")
 
+	username, err := requiredEnv("SASL_USERNAME")
+	if err != nil {
+		return err
+	}
+	password, err := requiredEnv("SASL_PASSWORD")
+	if err != nil {
+		return err
+	}
+
 	client, err := streamline.NewClient(streamline.Config{
 		Brokers: []string{envOr("STREAMLINE_BOOTSTRAP_SERVERS", "localhost:9092")},
 		SASL: &streamline.SASLConfig{
 			Mechanism: "PLAIN",
-			Username:  envOr("SASL_USERNAME", "admin"),
-			Password:  envOr("SASL_PASSWORD", "admin-secret"),
+			Username:  username,
+			Password:  password,
 		},
 	})
 	if err != nil {
@@ -55,12 +64,21 @@ func scramExample() error {
 	fmt.Println("SASL/SCRAM-SHA-256 Authentication")
 	fmt.Println("----------------------------------------")
 
+	username, err := requiredEnv("SASL_USERNAME")
+	if err != nil {
+		return err
+	}
+	password, err := requiredEnv("SASL_PASSWORD")
+	if err != nil {
+		return err
+	}
+
 	client, err := streamline.NewClient(streamline.Config{
 		Brokers: []string{envOr("STREAMLINE_BOOTSTRAP_SERVERS", "localhost:9092")},
 		SASL: &streamline.SASLConfig{
 			Mechanism: "SCRAM-SHA-256",
-			Username:  envOr("SASL_USERNAME", "admin"),
-			Password:  envOr("SASL_PASSWORD", "admin-secret"),
+			Username:  username,
+			Password:  password,
 		},
 	})
 	if err != nil {
@@ -119,6 +137,14 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func requiredEnv(key string) (string, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", key)
+	}
+	return value, nil
 }
 
 func main() {

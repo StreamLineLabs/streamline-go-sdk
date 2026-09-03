@@ -12,13 +12,13 @@ package streamline_test
 //
 // Set STREAMLINE_BOOTSTRAP and STREAMLINE_HTTP to override the default
 // localhost endpoints, STREAMLINE_SKIP_INTEGRATION=1 (or -short) to skip the
-// suite even when it is compiled in, and STREAMLINE_AUTH_ENABLED=true to run
-// the authentication tests.
+// suite even when it is compiled in. Auth tests additionally require
+// STREAMLINE_AUTH_ENABLED=true, explicit STREAMLINE_AUTH_MODES, and the
+// mode-specific external fixture configuration documented in README.md.
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -693,116 +693,117 @@ func TestG08_StaticMembership(t *testing.T) {
 
 // ========== AUTHENTICATION (6 tests) ==========
 
-func TestA01_TLSConnect(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
+func authTLSConfig(t *testing.T, mutual bool) *streamline.TLSConfig {
+	t.Helper()
+	config := &streamline.TLSConfig{
+		Enable: true,
+		CAFile: RequireAuthEnv(t, EnvAuthCAFile),
 	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		TLS:     &streamline.TLSConfig{},
+	if mutual {
+		config.CertFile = RequireAuthEnv(t, EnvAuthClientCertFile)
+		config.KeyFile = RequireAuthEnv(t, EnvAuthClientKeyFile)
 	}
-	client, err := streamline.NewClient(cfg)
+	return config
+}
+
+func authSASLConfig(t *testing.T, mechanism string) streamline.Config {
+	t.Helper()
+	config := streamline.DefaultConfig()
+	config.Brokers = []string{RequireAuthEnv(t, EnvBootstrap)}
+	config.SASL = &streamline.SASLConfig{
+		Mechanism: mechanism,
+		Username:  RequireAuthEnv(t, EnvAuthUsername),
+		Password:  RequireAuthEnv(t, EnvAuthPassword),
+	}
+	if AuthSASLTLSEnabled(t) {
+		config.TLS = authTLSConfig(t, false)
+	}
+	return config
+}
+
+func newAuthClient(t *testing.T, config streamline.Config) *streamline.Client {
+	t.Helper()
+	client, err := streamline.NewClient(config)
 	if err != nil {
-		t.Fatalf("TLS connect: %v", err)
+		t.Fatalf("create auth client: %v", err)
 	}
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Errorf("close auth client: %v", closeErr)
+		}
+	})
+	if _, err := client.Admin.ListTopics(context.Background()); err != nil {
+		t.Fatalf("verify authenticated metadata request: %v", err)
+	}
+	return client
+}
+
+func TestA01_TLSConnect(t *testing.T) {
+	RequireAuthMode(t, authModeTLS)
+	config := streamline.DefaultConfig()
+	config.Brokers = []string{RequireAuthEnv(t, EnvAuthTLSBootstrap)}
+	config.TLS = authTLSConfig(t, false)
+	newAuthClient(t, config)
 }
 
 func TestA02_MutualTLS(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
-	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		TLS:     &streamline.TLSConfig{},
-	}
-	client, err := streamline.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("mTLS connect: %v", err)
-	}
-	defer client.Close()
+	RequireAuthMode(t, authModeMTLS)
+	config := streamline.DefaultConfig()
+	config.Brokers = []string{RequireAuthEnv(t, EnvAuthTLSBootstrap)}
+	config.TLS = authTLSConfig(t, true)
+	newAuthClient(t, config)
 }
 
 func TestA03_SASLPlain(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
-	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		SASL: &streamline.SASLConfig{
-			Mechanism: "PLAIN",
-			Username:  "admin",
-			Password:  "admin-secret",
-		},
-	}
-	client, err := streamline.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("SASL PLAIN: %v", err)
-	}
-	defer client.Close()
+	RequireAuthMode(t, authModePlain)
+	newAuthClient(t, authSASLConfig(t, "PLAIN"))
 }
 
 func TestA04_SCRAMSHA256(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
-	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		SASL: &streamline.SASLConfig{
-			Mechanism: "SCRAM-SHA-256",
-			Username:  "admin",
-			Password:  "admin-secret",
-		},
-	}
-	client, err := streamline.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("SCRAM-SHA-256: %v", err)
-	}
-	defer client.Close()
+	RequireAuthMode(t, authModeSCRAMSHA256)
+	newAuthClient(t, authSASLConfig(t, "SCRAM-SHA-256"))
 }
 
 func TestA05_SCRAMSHA512(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
+	RequireAuthMode(t, authModeSCRAMSHA512)
+	newAuthClient(t, authSASLConfig(t, "SCRAM-SHA-512"))
+}
+
+func selectedSASLMechanism(t *testing.T) string {
+	t.Helper()
+	selection := RequireAuth(t)
+	for _, candidate := range []struct {
+		mode      string
+		mechanism string
+	}{
+		{mode: authModePlain, mechanism: "PLAIN"},
+		{mode: authModeSCRAMSHA256, mechanism: "SCRAM-SHA-256"},
+		{mode: authModeSCRAMSHA512, mechanism: "SCRAM-SHA-512"},
+	} {
+		if selection.includes(candidate.mode) {
+			return candidate.mechanism
+		}
 	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		SASL: &streamline.SASLConfig{
-			Mechanism: "SCRAM-SHA-512",
-			Username:  "admin",
-			Password:  "admin-secret",
-		},
-	}
-	client, err := streamline.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("SCRAM-SHA-512: %v", err)
-	}
-	defer client.Close()
+	t.Skip("authentication failure test requires at least one selected SASL mode")
+	return ""
 }
 
 func TestA06_AuthFailure(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
-	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		SASL: &streamline.SASLConfig{
-			Mechanism: "PLAIN",
-			Username:  "bad-user",
-			Password:  "wrong-password",
-		},
-	}
-	client, err := streamline.NewClient(cfg)
+	config := authSASLConfig(t, selectedSASLMechanism(t))
+	config.SASL.Username += "-invalid"
+	config.SASL.Password += "-invalid"
+
+	client, err := streamline.NewClient(config)
 	if err != nil {
-		// Expected: connection failure due to bad credentials
 		return
 	}
-	defer client.Close()
-	// If client was created, producing should fail
-	producer := client.Producer
-	_, err = producer.Send(context.Background(), "test", nil, []byte("should-fail"))
-	if err == nil {
-		t.Fatal("expected auth error")
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Errorf("close rejected auth client: %v", closeErr)
+		}
+	}()
+	if _, err := client.Admin.ListTopics(context.Background()); err == nil {
+		t.Fatal("invalid credentials unexpectedly completed an authenticated metadata request")
 	}
 }
 

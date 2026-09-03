@@ -12,7 +12,11 @@
 //	defer client.Close()
 //
 //	// Produce a message
-//	err = client.Producer.Send(ctx, "my-topic", nil, []byte("Hello, World!"))
+//	result, err := client.Producer.Send(ctx, "my-topic", nil, []byte("Hello, World!"))
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	log.Printf("produced to partition %d at offset %d", result.Partition, result.Offset)
 package streamline
 
 import (

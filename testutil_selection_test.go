@@ -76,3 +76,75 @@ func TestRequireIntegrationSkipsWhenDisabled(t *testing.T) {
 		t.Error("RequireIntegration should skip when " + EnvSkipIntegration + " is set")
 	}
 }
+
+func TestIntegrationRequired(t *testing.T) {
+	tests := []struct {
+		name       string
+		requireEnv string
+		authEnv    string
+		want       bool
+		wantErr    bool
+	}{
+		{name: "optional", want: false},
+		{name: "explicitly required", requireEnv: "true", want: true},
+		{name: "auth implies required", authEnv: "true", want: true},
+		{name: "both false", requireEnv: "false", authEnv: "false", want: false},
+		{name: "invalid require", requireEnv: "yes", wantErr: true},
+		{name: "invalid auth", authEnv: "enabled", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := integrationRequired(tt.requireEnv, tt.authEnv)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("integrationRequired(%q, %q) error = %v, wantErr=%v", tt.requireEnv, tt.authEnv, err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("integrationRequired(%q, %q) = %v, want %v", tt.requireEnv, tt.authEnv, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParseAuthSelection(t *testing.T) {
+	t.Run("disabled", func(t *testing.T) {
+		selection, err := parseAuthSelection("", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if selection.enabled {
+			t.Fatal("auth selection should be disabled")
+		}
+	})
+
+	t.Run("explicit modes", func(t *testing.T) {
+		selection, err := parseAuthSelection("true", "plain, SCRAM-SHA-256,mtls")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, mode := range []string{authModePlain, authModeSCRAMSHA256, authModeMTLS} {
+			if !selection.includes(mode) {
+				t.Errorf("selection should include %q", mode)
+			}
+		}
+		if selection.includes(authModeTLS) {
+			t.Error("selection should not include tls")
+		}
+	})
+
+	for _, tt := range []struct {
+		name    string
+		enabled string
+		modes   string
+	}{
+		{name: "invalid boolean", enabled: "yes", modes: "plain"},
+		{name: "missing modes", enabled: "true"},
+		{name: "unknown mode", enabled: "true", modes: "oauth"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := parseAuthSelection(tt.enabled, tt.modes); err == nil {
+				t.Fatal("parseAuthSelection succeeded, want error")
+			}
+		})
+	}
+}
