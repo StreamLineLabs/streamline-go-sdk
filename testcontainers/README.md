@@ -74,7 +74,7 @@ func main() {
 ```go
 container, err := streamline.RunContainer(ctx,
     streamline.WithDebugLogging(),
-    streamline.WithTag("0.2.0"),
+    streamline.WithTag("0.4.0"),
 )
 ```
 

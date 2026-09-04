@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   buffered transaction return values, verifier constructor, and experimental
   Moonshot clients; added compile-only Go examples for stable, experimental,
   embedded, and Testcontainers APIs
+- Centralized SDK version `0.4.0` and use it for OpenTelemetry instrumentation
+  scope metadata; release tags must now match the SDK version and changelog
 - Authentication conformance now requires explicit modes and fixture inputs,
   removes hard-coded credentials and empty TLS configs, and fails instead of
   skipping when enabled infrastructure is missing

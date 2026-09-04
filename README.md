@@ -758,7 +758,7 @@ compiles it without needing a server.
 
 Authentication is feature-gated in the Streamline server. This repository does
 not contain an auth-enabled server binary, users file, or certificate authority,
-and the standard integration image must not be treated as an auth fixture.
+and the standard 0.4.0 integration image must not be treated as an auth fixture.
 The manual
 [`Auth Conformance`](.github/workflows/auth-conformance.yml) workflow therefore
 targets an externally managed auth-enabled server through the protected

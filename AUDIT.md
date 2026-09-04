@@ -2,23 +2,29 @@
 
 **Audit date:** 2026-09-02
 
+**Release version:** 0.4.0
+
 **Branch reviewed:** `refactor/clean-code-srp`
 
 ## Status
 
 All safe programmatic P0/P1 release-readiness fixes identified in this
-repository have been implemented.
+repository have been implemented. The SDK version is now 0.4.0.
 
 Release publication is still gated on external infrastructure checks that
 cannot be reproduced in this worktree: a running Docker daemon for the standard
 conformance fixture, an externally provisioned auth-enabled Streamline server,
 the native `libstreamline` library, and GitHub Actions OIDC/release permissions.
+In addition, `v0.3.0` already exists on the remote while these changes remain
+under `[Unreleased]`. This worktree therefore targets the new `v0.4.0` release
+line and must not move or reuse the historical tag.
 
 ## Completed P0/P1 Work
 
 | Area | Result |
 | --- | --- |
 | Public examples | Corrected invalid producer, transaction, verifier, memory, and branch examples. Added compile-only Go examples for stable APIs, Moonshot APIs, embedded mode, and the nested Testcontainers module. |
+| Version integrity | Added a single `streamline.Version` constant at 0.4.0. OpenTelemetry instrumentation uses that value. Tests reject release tags that do not equal `v0.4.0`. |
 | Security/support | Corrected the security contact to `security@streamlinelabs.dev` (matching every other repository in the organization; an earlier pass in this worktree had drifted to `security@streamline.dev`), added private advisory reporting, updated support to 0.4.x, and separated normal support from vulnerability reporting. |
 | Auth conformance | Removed hard-coded credentials and empty TLS configs. Auth runs require explicit modes and mode-specific inputs and fail closed when enabled. Added a manual workflow for an externally managed auth fixture. |
 | Integration selection | Added `STREAMLINE_REQUIRE_INTEGRATION`; CI and Makefile live-test paths fail when the required server is unavailable instead of silently skipping. |
@@ -49,6 +55,7 @@ unless noted otherwise:
 - `golangci-lint` v2.12.2: zero issues; CI is pinned to v2.13.2
 - `actionlint`: all GitHub workflows pass
 - YAML parsing for GitHub configuration and JSON parsing for the devcontainer
+- Release-tag test with `STREAMLINE_RELEASE_TAG=v0.4.0`
 - Negative auth selection check: enabling auth without
   `STREAMLINE_AUTH_MODES` failed as required
 - Remote tag inspection confirmed that `v0.3.0` already exists, so this
@@ -63,7 +70,7 @@ modules so those dependencies continue to receive update proposals.
 ### Standard live conformance
 
 Not run locally. The Docker CLI could not obtain daemon information and panicked
-while formatting an empty server response, so the Compose fixture was not
+while formatting an empty server response, so the 0.4.0 Compose fixture was not
 usable in this environment. Tagged compilation, vet, selection tests, and
 fail-closed workflow wiring passed.
 
@@ -94,13 +101,13 @@ or release result is claimed until that workflow succeeds.
 
 1. Merge the reviewed work to `main`.
 2. Run the normal integration workflow on a runner with a working Docker
-   daemon and confirm the pinned server fixture passes.
+   daemon and confirm the pinned 0.4.0 server fixture passes.
 3. Provision the protected `auth-conformance` environment and run every
    supported auth mode against the real auth-enabled server fixture.
 4. If native embedded support is part of the release promise, build and test it
    against the exact `libstreamline` artifact to be supported.
 5. Do not move or reuse the existing `v0.3.0` tag. Publish only from a new
-   release tag after moving the changelog entries into that release section
+   `v0.4.0` tag after moving the changelog entries into that release section
    and require the signing, SBOM, provenance, and publication workflow to
    complete without overrides.
 

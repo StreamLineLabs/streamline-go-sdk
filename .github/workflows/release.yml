@@ -17,12 +17,12 @@ on:
       release_version:
         description: >-
           SDK version to promote, without a leading "v" (must match the
-          streamline.Version constant)
+          streamline.Version constant), e.g. 0.4.0
         required: true
         type: string
       release_tag:
         description: >-
-          Git tag to create (must equal "v<release_version>")
+          Git tag to create, e.g. v0.4.0 (must equal "v<release_version>")
         required: true
         type: string
       server_image_digest:
