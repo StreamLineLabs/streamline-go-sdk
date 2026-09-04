@@ -23,10 +23,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-const (
-	instrumentationName    = "streamline-go-sdk"
-	instrumentationVersion = "0.3.0"
-)
+const instrumentationName = "streamline-go-sdk"
 
 // messagingAttrs returns common OTel attributes for messaging spans.
 func messagingAttrs(topic, operation string) []attribute.KeyValue {
@@ -50,7 +47,7 @@ func (c HeaderCarrier) Get(key string) string {
 }
 
 // Set sets a key-value pair.
-func (c HeaderCarrier) Set(key string, value string) {
+func (c HeaderCarrier) Set(key, value string) {
 	c[key] = []byte(value)
 }
 
@@ -76,7 +73,7 @@ type TracingProducer struct {
 func NewTracingProducer(producer *Producer) *TracingProducer {
 	return &TracingProducer{
 		inner:  producer,
-		tracer: otel.GetTracerProvider().Tracer(instrumentationName, trace.WithInstrumentationVersion(instrumentationVersion)),
+		tracer: otel.GetTracerProvider().Tracer(instrumentationName, trace.WithInstrumentationVersion(Version)),
 	}
 }
 
@@ -217,12 +214,12 @@ type TracingConsumer struct {
 func NewTracingConsumer(consumer *Consumer) *TracingConsumer {
 	return &TracingConsumer{
 		inner:  consumer,
-		tracer: otel.GetTracerProvider().Tracer(instrumentationName, trace.WithInstrumentationVersion(instrumentationVersion)),
+		tracer: otel.GetTracerProvider().Tracer(instrumentationName, trace.WithInstrumentationVersion(Version)),
 	}
 }
 
 // Start begins consuming with tracing on the consumer loop.
-func (tc *TracingConsumer) Start(ctx context.Context) (<-chan *ConsumerMessage, <-chan error) {
+func (tc *TracingConsumer) Start(ctx context.Context) (messages <-chan *ConsumerMessage, errs <-chan error) {
 	topics := tc.inner.Topics()
 	topicStr := "unknown"
 	if len(topics) > 0 {

@@ -395,7 +395,12 @@ func (c *StreamlineContainer) AssertHealthy(ctx context.Context) error {
 	return nil
 }
 
-// WithAuthentication enables SASL/PLAIN authentication
+// WithAuthentication sets legacy authentication environment variables.
+//
+// Deprecated: the Streamline 0.3.0 release image does not provide a
+// self-contained auth fixture. Authentication requires an auth-enabled server
+// build and a separately provisioned users file. This option is retained for
+// source compatibility but must not be treated as proof that auth is enabled.
 func WithAuthentication(username, password string) ContainerOption {
 	return func(req *testcontainers.ContainerRequest) {
 		if req.Env == nil {
@@ -483,4 +488,3 @@ func httpGet(_ context.Context, url string) (string, error) {
 	}
 	return string(body), nil
 }
-

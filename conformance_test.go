@@ -1,16 +1,24 @@
+//go:build integration
+
 package streamline_test
 
 // SDK Conformance Test Suite — 46 tests per SDK_CONFORMANCE_SPEC.md
 //
-// Requires: docker compose -f docker-compose.test.yml up -d
+// These tests talk to a live Streamline server, so they are compiled only with
+// the "integration" build tag and are never part of `go test ./...`:
 //
-// Set STREAMLINE_BOOTSTRAP and STREAMLINE_HTTP env vars to override defaults.
-// Run with -short to skip integration tests that require a running server.
+//	docker compose -f docker-compose.test.yml up -d
+//	go test -tags=integration -timeout 120s ./...
+//
+// Set STREAMLINE_BOOTSTRAP and STREAMLINE_HTTP to override the default
+// localhost endpoints, STREAMLINE_SKIP_INTEGRATION=1 (or -short) to skip the
+// suite even when it is compiled in. Auth tests additionally require
+// STREAMLINE_AUTH_ENABLED=true, explicit STREAMLINE_AUTH_MODES, and the
+// mode-specific external fixture configuration documented in README.md.
 
 import (
 	"context"
 	"fmt"
-	"os"
 	"runtime"
 	"sort"
 	"strings"
@@ -21,17 +29,11 @@ import (
 )
 
 func bootstrap() string {
-	if v := os.Getenv("STREAMLINE_BOOTSTRAP"); v != "" {
-		return v
-	}
-	return "localhost:9092"
+	return IntegrationBootstrap()
 }
 
 func httpURL() string {
-	if v := os.Getenv("STREAMLINE_HTTP"); v != "" {
-		return v
-	}
-	return "http://localhost:9094"
+	return IntegrationHTTPURL()
 }
 
 func uniqueTopic(prefix string) string {
@@ -40,16 +42,14 @@ func uniqueTopic(prefix string) string {
 
 func newClient(t *testing.T) *streamline.Client {
 	t.Helper()
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
+
 	cfg := streamline.Config{
 		Brokers: []string{bootstrap()},
 	}
 	client, err := streamline.NewClient(cfg)
 	if err != nil {
 		t.Fatalf("create client: %v", err)
-
 	}
 	return client
 }
@@ -693,133 +693,131 @@ func TestG08_StaticMembership(t *testing.T) {
 
 // ========== AUTHENTICATION (6 tests) ==========
 
-func TestA01_TLSConnect(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
+func authTLSConfig(t *testing.T, mutual bool) *streamline.TLSConfig {
+	t.Helper()
+	config := &streamline.TLSConfig{
+		Enable: true,
+		CAFile: RequireAuthEnv(t, EnvAuthCAFile),
 	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		TLS:     &streamline.TLSConfig{},
+	if mutual {
+		config.CertFile = RequireAuthEnv(t, EnvAuthClientCertFile)
+		config.KeyFile = RequireAuthEnv(t, EnvAuthClientKeyFile)
 	}
-	client, err := streamline.NewClient(cfg)
+	return config
+}
+
+func authSASLConfig(t *testing.T, mechanism string) streamline.Config {
+	t.Helper()
+	config := streamline.DefaultConfig()
+	config.Brokers = []string{RequireAuthEnv(t, EnvBootstrap)}
+	config.SASL = &streamline.SASLConfig{
+		Mechanism: mechanism,
+		Username:  RequireAuthEnv(t, EnvAuthUsername),
+		Password:  RequireAuthEnv(t, EnvAuthPassword),
+	}
+	if AuthSASLTLSEnabled(t) {
+		config.TLS = authTLSConfig(t, false)
+	}
+	return config
+}
+
+func newAuthClient(t *testing.T, config streamline.Config) *streamline.Client {
+	t.Helper()
+	client, err := streamline.NewClient(config)
 	if err != nil {
-		t.Fatalf("TLS connect: %v", err)
+		t.Fatalf("create auth client: %v", err)
 	}
-	defer client.Close()
+	t.Cleanup(func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Errorf("close auth client: %v", closeErr)
+		}
+	})
+	if _, err := client.Admin.ListTopics(context.Background()); err != nil {
+		t.Fatalf("verify authenticated metadata request: %v", err)
+	}
+	return client
+}
+
+func TestA01_TLSConnect(t *testing.T) {
+	RequireAuthMode(t, authModeTLS)
+	config := streamline.DefaultConfig()
+	config.Brokers = []string{RequireAuthEnv(t, EnvAuthTLSBootstrap)}
+	config.TLS = authTLSConfig(t, false)
+	newAuthClient(t, config)
 }
 
 func TestA02_MutualTLS(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
-	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		TLS:     &streamline.TLSConfig{},
-	}
-	client, err := streamline.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("mTLS connect: %v", err)
-	}
-	defer client.Close()
+	RequireAuthMode(t, authModeMTLS)
+	config := streamline.DefaultConfig()
+	config.Brokers = []string{RequireAuthEnv(t, EnvAuthTLSBootstrap)}
+	config.TLS = authTLSConfig(t, true)
+	newAuthClient(t, config)
 }
 
 func TestA03_SASLPlain(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
-	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		SASL: &streamline.SASLConfig{
-			Mechanism: "PLAIN",
-			Username:  "admin",
-			Password:  "admin-secret",
-		},
-	}
-	client, err := streamline.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("SASL PLAIN: %v", err)
-	}
-	defer client.Close()
+	RequireAuthMode(t, authModePlain)
+	newAuthClient(t, authSASLConfig(t, "PLAIN"))
 }
 
 func TestA04_SCRAMSHA256(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
-	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		SASL: &streamline.SASLConfig{
-			Mechanism: "SCRAM-SHA-256",
-			Username:  "admin",
-			Password:  "admin-secret",
-		},
-	}
-	client, err := streamline.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("SCRAM-SHA-256: %v", err)
-	}
-	defer client.Close()
+	RequireAuthMode(t, authModeSCRAMSHA256)
+	newAuthClient(t, authSASLConfig(t, "SCRAM-SHA-256"))
 }
 
 func TestA05_SCRAMSHA512(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
+	RequireAuthMode(t, authModeSCRAMSHA512)
+	newAuthClient(t, authSASLConfig(t, "SCRAM-SHA-512"))
+}
+
+func selectedSASLMechanism(t *testing.T) string {
+	t.Helper()
+	selection := RequireAuth(t)
+	for _, candidate := range []struct {
+		mode      string
+		mechanism string
+	}{
+		{mode: authModePlain, mechanism: "PLAIN"},
+		{mode: authModeSCRAMSHA256, mechanism: "SCRAM-SHA-256"},
+		{mode: authModeSCRAMSHA512, mechanism: "SCRAM-SHA-512"},
+	} {
+		if selection.includes(candidate.mode) {
+			return candidate.mechanism
+		}
 	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		SASL: &streamline.SASLConfig{
-			Mechanism: "SCRAM-SHA-512",
-			Username:  "admin",
-			Password:  "admin-secret",
-		},
-	}
-	client, err := streamline.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("SCRAM-SHA-512: %v", err)
-	}
-	defer client.Close()
+	t.Skip("authentication failure test requires at least one selected SASL mode")
+	return ""
 }
 
 func TestA06_AuthFailure(t *testing.T) {
-	if os.Getenv("STREAMLINE_AUTH_ENABLED") != "true" {
-		t.Skip("requires auth-enabled server")
-	}
-	cfg := streamline.Config{
-		Brokers: []string{bootstrap()},
-		SASL: &streamline.SASLConfig{
-			Mechanism: "PLAIN",
-			Username:  "bad-user",
-			Password:  "wrong-password",
-		},
-	}
-	client, err := streamline.NewClient(cfg)
+	config := authSASLConfig(t, selectedSASLMechanism(t))
+	config.SASL.Username += "-invalid"
+	config.SASL.Password += "-invalid"
+
+	client, err := streamline.NewClient(config)
 	if err != nil {
-		// Expected: connection failure due to bad credentials
 		return
 	}
-	defer client.Close()
-	// If client was created, producing should fail
-	producer := client.Producer
-	_, err = producer.Send(context.Background(), "test", nil, []byte("should-fail"))
-	if err == nil {
-		t.Fatal("expected auth error")
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			t.Errorf("close rejected auth client: %v", closeErr)
+		}
+	}()
+	if _, err := client.Admin.ListTopics(context.Background()); err == nil {
+		t.Fatal("invalid credentials unexpectedly completed an authenticated metadata request")
 	}
 }
 
 // ========== SCHEMA REGISTRY (6 tests) ==========
 
-const schemaRegistryURL = "http://localhost:9094"
 const avroSchema = `{"type":"record","name":"User","fields":[{"name":"id","type":"int"},{"name":"name","type":"string"}]}`
 const jsonSchema = `{"type":"object","properties":{"id":{"type":"integer"},"name":{"type":"string"}},"required":["id","name"]}`
 
 func schemaClient() *streamline.SchemaRegistryClient {
-	return streamline.NewSchemaRegistryClient(schemaRegistryURL)
+	return streamline.NewSchemaRegistryClient(httpURL())
 }
 
 func TestS01_RegisterSchema(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	id, err := client.RegisterSchema("test-s01-value", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -831,9 +829,7 @@ func TestS01_RegisterSchema(t *testing.T) {
 }
 
 func TestS02_GetByID(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	id, err := client.RegisterSchema("test-s02-value", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -849,9 +845,7 @@ func TestS02_GetByID(t *testing.T) {
 }
 
 func TestS03_GetVersions(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	_, err := client.RegisterSchema("test-s03-value", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -867,9 +861,7 @@ func TestS03_GetVersions(t *testing.T) {
 }
 
 func TestS04_CompatibilityCheck(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	_, err := client.RegisterSchema("test-s04-value", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -883,9 +875,7 @@ func TestS04_CompatibilityCheck(t *testing.T) {
 }
 
 func TestS05_AvroSchema(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	id, err := client.RegisterSchema("test-s05-avro", avroSchema, streamline.SchemaTypeAvro)
 	if err != nil {
@@ -901,9 +891,7 @@ func TestS05_AvroSchema(t *testing.T) {
 }
 
 func TestS06_JSONSchema(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	client := schemaClient()
 	id, err := client.RegisterSchema("test-s06-json", jsonSchema, streamline.SchemaTypeJSON)
 	if err != nil {
@@ -1149,9 +1137,7 @@ func TestF02_LatencyP99(t *testing.T) {
 }
 
 func TestF03_StartupTime(t *testing.T) {
-	if testing.Short() {
-		t.Skip("requires running Streamline server")
-	}
+	SkipIfNoServer(t)
 	start := time.Now()
 	cfg := streamline.Config{Brokers: []string{bootstrap()}}
 	client, err := streamline.NewClient(cfg)

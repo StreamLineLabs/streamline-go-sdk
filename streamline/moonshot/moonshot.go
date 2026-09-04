@@ -73,12 +73,12 @@ func newBase(opts Options) (*httpBase, error) {
 	}, nil
 }
 
-func (h *httpBase) do(ctx context.Context, method, path string, body any, out any) (int, []byte, error) {
+func (h *httpBase) do(ctx context.Context, method, path string, body, out any) (_ int, _ []byte, err error) {
 	var rdr io.Reader
 	if body != nil {
-		buf, err := json.Marshal(body)
-		if err != nil {
-			return 0, nil, fmt.Errorf("marshal body: %w", err)
+		buf, marshalErr := json.Marshal(body)
+		if marshalErr != nil {
+			return 0, nil, fmt.Errorf("marshal body: %w", marshalErr)
 		}
 		rdr = bytes.NewReader(buf)
 	}
@@ -94,14 +94,18 @@ func (h *httpBase) do(ctx context.Context, method, path string, body any, out an
 	if err != nil {
 		return 0, nil, err
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil && err == nil {
+			err = fmt.Errorf("close response body: %w", closeErr)
+		}
+	}()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && out != nil && len(raw) > 0 {
-		if err := json.Unmarshal(raw, out); err != nil {
-			return resp.StatusCode, raw, fmt.Errorf("decode response: %w", err)
+		if decodeErr := json.Unmarshal(raw, out); decodeErr != nil {
+			return resp.StatusCode, raw, fmt.Errorf("decode response: %w", decodeErr)
 		}
 	}
 	return resp.StatusCode, raw, nil
@@ -341,9 +345,8 @@ func (c *ContractsClient) Validate(ctx context.Context, contract Contract, parti
 	if contract.Assertions == nil {
 		contract.Assertions = []ContractAssertion{}
 	}
-	switch v := value.(type) {
-	case []byte:
-		value = string(v)
+	if b, ok := value.([]byte); ok {
+		value = string(b)
 	}
 	body := map[string]any{
 		"contract":  contract,
@@ -361,7 +364,9 @@ func (c *ContractsClient) Validate(ctx context.Context, contract Contract, parti
 			Topic  string `json:"topic"`
 		}
 		if len(raw) > 0 {
-			_ = json.Unmarshal(raw, &w)
+			if decodeErr := json.Unmarshal(raw, &w); decodeErr != nil {
+				return nil, fmt.Errorf("decode contract validation response: %w", decodeErr)
+			}
 		}
 		return &ContractValidationResult{Valid: true, Topic: w.Topic}, nil
 	case 400:
@@ -375,8 +380,13 @@ func (c *ContractsClient) Validate(ctx context.Context, contract Contract, parti
 			Message   string `json:"message"`
 			SchemaID  *int   `json:"schema_id,omitempty"`
 		}
+		// A 400 body that does not parse is a transport-level error rather
+		// than a contract violation, and is surfaced with the raw payload
+		// below just like any other unexpected 400 shape.
 		if len(raw) > 0 {
-			_ = json.Unmarshal(raw, &w)
+			if decodeErr := json.Unmarshal(raw, &w); decodeErr != nil {
+				return nil, &HTTPError{Method: "POST", Path: "/api/v1/contracts/validate", Status: status, Body: string(raw)}
+			}
 		}
 		// `status:"error"` is the canonical failure envelope. Any other 400
 		// shape is a transport-level error and we surface it as one.

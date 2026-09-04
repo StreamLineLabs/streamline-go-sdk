@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"time"
@@ -185,16 +186,24 @@ func (a *Admin) DescribeTopic(ctx context.Context, name string) (*TopicInfo, []P
 		}
 	}
 
-	// Get replication factor from first partition
-	var replicationFactor int16
-	if len(partitions) > 0 {
-		replicationFactor = int16(len(partitions[0].Replicas))
+	// Partition and replica counts come straight off the wire, so they are
+	// range-checked before being narrowed to the protocol's int32/int16 types.
+	partitionCount := len(partitions)
+	replicaCount := 0
+	if partitionCount > 0 {
+		replicaCount = len(partitions[0].Replicas)
+	}
+	if replicaCount > math.MaxInt16 {
+		return nil, nil, fmt.Errorf("streamline: topic %s reports %d replicas, above the protocol maximum of %d", name, replicaCount, math.MaxInt16)
+	}
+	if partitionCount > math.MaxInt32 {
+		return nil, nil, fmt.Errorf("streamline: topic %s reports %d partitions, above the protocol maximum of %d", name, partitionCount, math.MaxInt32)
 	}
 
 	topicInfo := &TopicInfo{
 		Name:              name,
-		Partitions:        int32(len(partitions)),
-		ReplicationFactor: replicationFactor,
+		Partitions:        int32(partitionCount),
+		ReplicationFactor: int16(replicaCount),
 		Internal:          topicMeta.IsInternal,
 	}
 
@@ -332,12 +341,12 @@ func (a *Admin) DeleteConsumerGroup(ctx context.Context, groupID string) error {
 }
 
 // GetConsumerGroupOffsets returns the offsets for a consumer group.
-func (a *Admin) GetConsumerGroupOffsets(ctx context.Context, groupID string, topic string) (map[int32]int64, error) {
+func (a *Admin) GetConsumerGroupOffsets(ctx context.Context, groupID, topic string) (_ map[int32]int64, err error) {
 	offsetMgr, err := sarama.NewOffsetManagerFromClient(groupID, a.client)
 	if err != nil {
 		return nil, fmt.Errorf("streamline: failed to create offset manager: %w", err)
 	}
-	defer offsetMgr.Close()
+	defer func() { err = joinClose(err, offsetMgr, "close offset manager") }()
 
 	partitions, err := a.client.Partitions(topic)
 	if err != nil {
@@ -346,20 +355,24 @@ func (a *Admin) GetConsumerGroupOffsets(ctx context.Context, groupID string, top
 
 	offsets := make(map[int32]int64)
 	for _, p := range partitions {
-		pom, err := offsetMgr.ManagePartition(topic, p)
-		if err != nil {
+		pom, manageErr := offsetMgr.ManagePartition(topic, p)
+		if manageErr != nil {
+			// Partitions this client cannot manage are simply absent from the
+			// result rather than failing the whole lookup.
 			continue
 		}
 		offset, _ := pom.NextOffset()
 		offsets[p] = offset
-		pom.Close()
+		if closeErr := pom.Close(); closeErr != nil {
+			return nil, fmt.Errorf("streamline: failed to close offset manager for partition %d: %w", p, closeErr)
+		}
 	}
 
 	return offsets, nil
 }
 
 // ResetConsumerGroupOffsets resets offsets for a consumer group.
-func (a *Admin) ResetConsumerGroupOffsets(ctx context.Context, groupID string, topic string, offset int64) error {
+func (a *Admin) ResetConsumerGroupOffsets(ctx context.Context, groupID, topic string, offset int64) (err error) {
 	partitions, err := a.client.Partitions(topic)
 	if err != nil {
 		return fmt.Errorf("streamline: failed to get partitions: %w", err)
@@ -369,39 +382,58 @@ func (a *Admin) ResetConsumerGroupOffsets(ctx context.Context, groupID string, t
 	if err != nil {
 		return fmt.Errorf("streamline: failed to create offset manager: %w", err)
 	}
-	defer offsetMgr.Close()
+	defer func() { err = joinClose(err, offsetMgr, "close offset manager") }()
 
 	for _, p := range partitions {
-		pom, err := offsetMgr.ManagePartition(topic, p)
-		if err != nil {
-			return fmt.Errorf("streamline: failed to manage partition %d: %w", p, err)
+		if resetErr := a.resetPartitionOffset(offsetMgr, topic, p, offset); resetErr != nil {
+			return resetErr
 		}
-
-		targetOffset := offset
-		if offset == -1 { // Latest
-			latest, err := a.client.GetOffset(topic, p, sarama.OffsetNewest)
-			if err != nil {
-				pom.Close()
-				return fmt.Errorf("streamline: failed to get latest offset: %w", err)
-			}
-			targetOffset = latest
-		} else if offset == -2 { // Earliest
-			earliest, err := a.client.GetOffset(topic, p, sarama.OffsetOldest)
-			if err != nil {
-				pom.Close()
-				return fmt.Errorf("streamline: failed to get earliest offset: %w", err)
-			}
-			targetOffset = earliest
-		}
-
-		pom.MarkOffset(targetOffset, "")
-		pom.Close()
 	}
 
 	// Wait for commits
 	time.Sleep(100 * time.Millisecond)
 
 	return nil
+}
+
+// resetPartitionOffset marks a single partition at the requested offset, where
+// -1 means latest and -2 means earliest.
+func (a *Admin) resetPartitionOffset(offsetMgr sarama.OffsetManager, topic string, partition int32, offset int64) (err error) {
+	pom, err := offsetMgr.ManagePartition(topic, partition)
+	if err != nil {
+		return fmt.Errorf("streamline: failed to manage partition %d: %w", partition, err)
+	}
+	defer func() {
+		err = joinClose(err, pom, fmt.Sprintf("close offset manager for partition %d", partition))
+	}()
+
+	targetOffset := offset
+	switch offset {
+	case -1: // Latest
+		latest, offsetErr := a.client.GetOffset(topic, partition, sarama.OffsetNewest)
+		if offsetErr != nil {
+			return fmt.Errorf("streamline: failed to get latest offset: %w", offsetErr)
+		}
+		targetOffset = latest
+	case -2: // Earliest
+		earliest, offsetErr := a.client.GetOffset(topic, partition, sarama.OffsetOldest)
+		if offsetErr != nil {
+			return fmt.Errorf("streamline: failed to get earliest offset: %w", offsetErr)
+		}
+		targetOffset = earliest
+	}
+
+	applyPartitionOffset(pom, targetOffset)
+	return nil
+}
+
+func applyPartitionOffset(manager sarama.PartitionOffsetManager, targetOffset int64) {
+	currentOffset, _ := manager.NextOffset()
+	if targetOffset <= currentOffset {
+		manager.ResetOffset(targetOffset, "")
+	} else {
+		manager.MarkOffset(targetOffset, "")
+	}
 }
 
 // Close closes the admin client.
@@ -584,8 +616,8 @@ func (h *HTTPAdmin) DiscardBranch(ctx context.Context, branchID string) error {
 }
 
 // get performs an HTTP GET and decodes the JSON response into target.
-func (h *HTTPAdmin) get(ctx context.Context, path string, target any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.baseURL+path, nil)
+func (h *HTTPAdmin) get(ctx context.Context, path string, target any) (err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, h.baseURL+path, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -594,18 +626,17 @@ func (h *HTTPAdmin) get(ctx context.Context, path string, target any) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
+		return httpStatusError(resp)
 	}
 
 	return json.NewDecoder(resp.Body).Decode(target)
 }
 
 // post performs an HTTP POST with a JSON body and decodes the JSON response.
-func (h *HTTPAdmin) post(ctx context.Context, path string, body any, target any) error {
+func (h *HTTPAdmin) post(ctx context.Context, path string, body, target any) (err error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return fmt.Errorf("marshal body: %w", err)
@@ -619,10 +650,9 @@ func (h *HTTPAdmin) post(ctx context.Context, path string, body any, target any)
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		return httpStatusError(resp)
 	}
 	if target != nil {
 		return json.NewDecoder(resp.Body).Decode(target)
@@ -631,8 +661,8 @@ func (h *HTTPAdmin) post(ctx context.Context, path string, body any, target any)
 }
 
 // deleteReq performs an HTTP DELETE request.
-func (h *HTTPAdmin) deleteReq(ctx context.Context, path string) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, h.baseURL+path, nil)
+func (h *HTTPAdmin) deleteReq(ctx context.Context, path string) (err error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, h.baseURL+path, http.NoBody)
 	if err != nil {
 		return fmt.Errorf("create request: %w", err)
 	}
@@ -640,10 +670,19 @@ func (h *HTTPAdmin) deleteReq(ctx context.Context, path string) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close response body") }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+		return httpStatusError(resp)
 	}
 	return nil
+}
+
+// httpStatusError builds the error for a non-success HTTP response, including
+// the response body when it can be read.
+func httpStatusError(resp *http.Response) error {
+	body, readErr := io.ReadAll(resp.Body)
+	if readErr != nil {
+		return fmt.Errorf("HTTP %d: failed to read error response: %w", resp.StatusCode, readErr)
+	}
+	return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(body))
 }

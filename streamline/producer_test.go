@@ -1,6 +1,7 @@
 package streamline
 
 import (
+	"context"
 	"fmt"
 	"testing"
 	"time"
@@ -136,9 +137,9 @@ func TestProducerResult(t *testing.T) {
 
 func TestAsyncProducerResult(t *testing.T) {
 	tests := []struct {
-		name      string
-		result    AsyncProducerResult
-		hasErr    bool
+		name   string
+		result AsyncProducerResult
+		hasErr bool
 	}{
 		{
 			name: "success",
@@ -188,7 +189,7 @@ func TestProducerCloseIdempotent(t *testing.T) {
 
 func TestProducerSendWhenClosed(t *testing.T) {
 	p := &Producer{closed: true}
-	_, err := p.SendMessage(nil, &Message{Topic: "topic", Value: []byte("data")})
+	_, err := p.SendMessage(context.Background(), &Message{Topic: "topic", Value: []byte("data")})
 	if err == nil {
 		t.Fatal("expected error when producer is closed")
 	}
@@ -229,7 +230,7 @@ func TestProducerSendValidatesTopicName(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := p.Send(nil, tt.topic, nil, []byte("data"))
+			_, err := p.Send(context.Background(), tt.topic, nil, []byte("data"))
 			if (err != nil) != tt.wantErr {
 				t.Errorf("Send(%q) error = %v, wantErr %v", tt.topic, err, tt.wantErr)
 			}
@@ -239,7 +240,7 @@ func TestProducerSendValidatesTopicName(t *testing.T) {
 
 func TestProducerSendMessageValidatesTopicName(t *testing.T) {
 	p := &Producer{}
-	_, err := p.SendMessage(nil, &Message{Topic: "", Value: []byte("data")})
+	_, err := p.SendMessage(context.Background(), &Message{Topic: "", Value: []byte("data")})
 	if err == nil {
 		t.Fatal("expected validation error for empty topic")
 	}

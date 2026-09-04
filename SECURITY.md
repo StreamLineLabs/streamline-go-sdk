@@ -2,33 +2,49 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.2.x   | :white_check_mark: |
-| < 0.2   | :x:                |
+Security fixes are applied to the current minor release line.
+
+| Version | Supported |
+| ------- | --------- |
+| 0.4.x   | Yes       |
+| <= 0.3  | No        |
+
+Users on an unsupported release should upgrade before requesting a security
+backport.
 
 ## Reporting a Vulnerability
 
-Please report security vulnerabilities to **security@streamlinelabs.dev**.
+Do **not** open a public issue for a suspected vulnerability.
 
-**Do NOT open public issues for security vulnerabilities.**
+Use one of these private channels:
+
+1. [Open a private GitHub security advisory](https://github.com/streamlinelabs/streamline-go-sdk/security/advisories/new).
+2. Email **security@streamlinelabs.dev** if private vulnerability reporting is
+   unavailable.
+
+Do not include production credentials, private keys, access tokens, or customer
+data. Provide sanitized reproductions instead.
 
 ### What to Include
 
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Suggested fix (if any)
+- Affected SDK and Go versions
+- A description of the vulnerability and potential impact
+- Minimal reproduction steps or a proof of concept
+- Any relevant configuration, with secrets removed
+- Suggested remediation, if known
 
-### Response Timeline
+The maintainers aim to acknowledge reports within 48 hours and provide an
+initial assessment within 7 days. Remediation and disclosure timing depend on
+severity, affected upstream components, and release coordination. These targets
+are not a contractual service-level agreement.
 
-- **Acknowledgment**: Within 48 hours
-- **Initial Assessment**: Within 5 business days
-- **Fix Timeline**: Communicated after assessment
+Reporters may be credited in an advisory or release notes with their permission.
 
-We follow responsible disclosure practices and will credit reporters (with permission) in our release notes.
+## Scope
 
-## Security Best Practices
+This policy covers code and release artifacts from this repository. Vulnerabilities
+in the Streamline server should be reported through the
+[server security policy](https://github.com/streamlinelabs/streamline/security/policy).
 
-For production deployments, please review the [Streamline Security Documentation](https://github.com/streamlinelabs/streamline-docs).
-
+General questions, feature requests, and non-sensitive bugs belong in the
+[support channels](SUPPORT.md).

@@ -23,6 +23,17 @@ coverage.html
 # Compiled test binaries
 *.test
 
+# Locally built examples (each binary is named after its directory)
+/agent_memory
+/query_usage
+/schema_registry
+/examples/examples
+/examples/agent_memory/agent_memory
+/examples/circuit_breaker/circuit_breaker
+/examples/query_usage/query_usage
+/examples/schema_registry/schema_registry
+/examples/security/security
+
 # Misc
 *.log
 

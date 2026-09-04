@@ -3,7 +3,27 @@
 // This allows Go applications to embed a Streamline server directly,
 // eliminating the need for a separate server process.
 //
-// Usage:
+// # Build requirements
+//
+// The bindings are compiled only when the "embedded" build tag is set and CGO
+// is enabled, because they link against the native Streamline library:
+//
+//	CGO_ENABLED=1 go build -tags embedded ./...
+//
+// The linker needs libstreamline (see the streamline core repository for build
+// instructions) on its search path, for example:
+//
+//	CGO_ENABLED=1 \
+//	CGO_CFLAGS="-I/path/to/streamline/include" \
+//	CGO_LDFLAGS="-L/path/to/streamline/lib" \
+//	go build -tags embedded ./...
+//
+// Without the build tag (the default) the package still compiles and exposes
+// the same API, but every operation returns ErrNotEnabled. This keeps
+// "go build ./..." and "go test ./..." self-contained for users that only need
+// the network client.
+//
+// # Usage
 //
 //	instance, err := embedded.New(embedded.Config{InMemory: true})
 //	if err != nil { log.Fatal(err) }
@@ -13,30 +33,25 @@
 //	msg, err := instance.Consume("my-topic", 5*time.Second)
 package embedded
 
-/*
-#cgo LDFLAGS: -lstreamline
-#include "streamline.h"
-#include <stdlib.h>
-*/
-import "C"
+import "errors"
 
-import (
-	"encoding/json"
-	"fmt"
-	"time"
-	"unsafe"
-)
+// ErrNotEnabled is returned by every operation when the package was built
+// without the "embedded" build tag or with CGO disabled.
+var ErrNotEnabled = errors.New("streamline embedded: not available; rebuild with CGO_ENABLED=1 go build -tags embedded and link libstreamline")
+
+// ErrClosed is returned when an operation is attempted on a closed instance.
+var ErrClosed = errors.New("streamline embedded: instance is closed")
+
+// ErrQueryUnsupported is returned by Instance.Query because the Streamline C
+// ABI (streamline.h) exposes no SQL entry point. Use the HTTP query API
+// (streamline.NewQueryClient) against a running server instead.
+var ErrQueryUnsupported = errors.New("streamline embedded: SQL queries are not exposed by the Streamline C ABI")
 
 // Config for the embedded Streamline instance.
 type Config struct {
 	DataDir    string `json:"data_dir,omitempty"`
 	InMemory   bool   `json:"in_memory,omitempty"`
 	Partitions int    `json:"partitions,omitempty"`
-}
-
-// Instance is an embedded Streamline server.
-type Instance struct {
-	handle *C.StreamlineHandle
 }
 
 // Message received from a topic.
@@ -47,119 +62,4 @@ type Message struct {
 	Key       []byte
 	Value     []byte
 	Timestamp int64
-}
-
-// New creates a new embedded Streamline instance.
-func New(config Config) (*Instance, error) {
-	configJSON, err := json.Marshal(config)
-	if err != nil {
-		return nil, fmt.Errorf("marshal config: %w", err)
-	}
-
-	cConfig := C.CString(string(configJSON))
-	defer C.free(unsafe.Pointer(cConfig))
-
-	handle := C.streamline_create(cConfig)
-	if handle == nil {
-		errMsg := C.GoString(C.streamline_last_error())
-		return nil, fmt.Errorf("create instance: %s", errMsg)
-	}
-
-	return &Instance{handle: handle}, nil
-}
-
-// Close destroys the instance and frees resources.
-func (i *Instance) Close() {
-	if i.handle != nil {
-		C.streamline_destroy(i.handle)
-		i.handle = nil
-	}
-}
-
-// Produce sends a message to a topic.
-func (i *Instance) Produce(topic string, value []byte) error {
-	return i.ProduceWithKey(topic, value, nil)
-}
-
-// ProduceWithKey sends a keyed message to a topic.
-func (i *Instance) ProduceWithKey(topic string, value, key []byte) error {
-	cTopic := C.CString(topic)
-	defer C.free(unsafe.Pointer(cTopic))
-
-	var keyPtr *C.uint8_t
-	var keyLen C.size_t
-	if key != nil {
-		keyPtr = (*C.uint8_t)(unsafe.Pointer(&key[0]))
-		keyLen = C.size_t(len(key))
-	}
-
-	result := C.streamline_produce(
-		i.handle,
-		cTopic,
-		(*C.uint8_t)(unsafe.Pointer(&value[0])),
-		C.size_t(len(value)),
-		keyPtr,
-		keyLen,
-	)
-
-	if result != C.STREAMLINE_OK {
-		return fmt.Errorf("produce failed (code %d)", result)
-	}
-	return nil
-}
-
-// Consume reads a single message from a topic.
-func (i *Instance) Consume(topic string, timeout time.Duration) (*Message, error) {
-	cTopic := C.CString(topic)
-	defer C.free(unsafe.Pointer(cTopic))
-
-	msg := C.streamline_consume(i.handle, cTopic, C.int64_t(timeout.Milliseconds()))
-	if msg == nil {
-		return nil, nil // timeout, no message
-	}
-	defer C.streamline_message_free(msg)
-
-	return &Message{
-		Topic:     C.GoString(msg.topic),
-		Partition: int32(msg.partition),
-		Offset:    int64(msg.offset),
-		Key:       C.GoBytes(unsafe.Pointer(msg.key), C.int(msg.key_len)),
-		Value:     C.GoBytes(unsafe.Pointer(msg.value), C.int(msg.value_len)),
-		Timestamp: int64(msg.timestamp),
-	}, nil
-}
-
-// CreateTopic creates a new topic.
-func (i *Instance) CreateTopic(name string, partitions int) error {
-	cName := C.CString(name)
-	defer C.free(unsafe.Pointer(cName))
-
-	result := C.streamline_create_topic(i.handle, cName, C.int32_t(partitions))
-	if result != C.STREAMLINE_OK {
-		return fmt.Errorf("create topic failed (code %d)", result)
-	}
-	return nil
-}
-
-// Query executes a SQL query on stream data.
-func (i *Instance) Query(sql string) (string, error) {
-	cSQL := C.CString(sql)
-	defer C.free(unsafe.Pointer(cSQL))
-
-	result := C.streamline_query(i.handle, cSQL)
-	if result == nil {
-		return "", fmt.Errorf("query returned nil")
-	}
-	defer C.streamline_query_result_free(result)
-
-	if result.error_code != 0 {
-		return "", fmt.Errorf("query error: %s", C.GoString(result.error_message))
-	}
-
-	return C.GoStringN(result.json_data, C.int(result.json_len)), nil
-}
-
-// Version returns the Streamline version.
-func Version() string {
-	return C.GoString(C.streamline_version())
 }

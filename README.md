@@ -3,11 +3,11 @@
 [![CI](https://github.com/streamlinelabs/streamline-go-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/streamlinelabs/streamline-go-sdk/actions/workflows/ci.yml)
 [![codecov](https://img.shields.io/codecov/c/github/streamlinelabs/streamline-go-sdk?style=flat-square)](https://codecov.io/gh/streamlinelabs/streamline-go-sdk)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Go](https://img.shields.io/badge/Go-1.22%2B-cyan.svg)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.25.14%2B-cyan.svg)](https://go.dev/)
 [![Docs](https://img.shields.io/badge/docs-streamlinelabs.dev-blue.svg)](https://streamlinelabs.dev/docs/sdks/go)
 [![Go Reference](https://pkg.go.dev/badge/github.com/streamlinelabs/streamline-go-sdk.svg)](https://pkg.go.dev/github.com/streamlinelabs/streamline-go-sdk)
 
-Official Go client for [Streamline](https://github.com/streamlinelabs/streamline-go-sdk) - The Redis of Streaming.
+Official Go client for [Streamline](https://github.com/streamlinelabs/streamline) - The Redis of Streaming.
 
 ## Features
 
@@ -55,11 +55,25 @@ result, err := tracingProducer.Send(ctx, "orders", []byte("key"), []byte("value"
 
 ```go
 messages, errors := tracingConsumer.Start(ctx)
-for msg := range messages {
-    // Create a processing span linked to the producer trace
-    processCtx, span := tracingConsumer.TraceProcess(ctx, msg)
-    processMessage(processCtx, msg)
-    span.End()
+for {
+    select {
+    case msg, ok := <-messages:
+        if !ok {
+            return
+        }
+        // Create a processing span linked to the producer trace
+        processCtx, span := tracingConsumer.TraceProcess(ctx, msg)
+        processMessage(processCtx, msg)
+        span.End()
+    case err, ok := <-errors:
+        if !ok {
+            errors = nil
+            continue
+        }
+        log.Printf("Consumer error: %v", err)
+    case <-ctx.Done():
+        return
+    }
 }
 ```
 
@@ -157,26 +171,40 @@ if result.Err != nil {
 }
 ```
 
-## Transactions
+## Buffered Transactions
 
-The Go SDK supports client-side buffered transactions for atomic batch sends:
+The Go SDK supports client-side buffering before a batch send:
 
 ```go
-producer := client.Producer()
-producer.BeginTransaction()
+producer := client.Producer
+if err := producer.BeginTransaction(); err != nil {
+    log.Fatal(err)
+}
 
-producer.SendTransactional(ctx, &streamline.Message{Topic: "orders", Key: []byte("k1"), Value: []byte("v1")})
-producer.SendTransactional(ctx, &streamline.Message{Topic: "orders", Key: []byte("k2"), Value: []byte("v2")})
+if err := producer.SendTransactional(ctx, &streamline.Message{
+    Topic: "orders", Key: []byte("k1"), Value: []byte("v1"),
+}); err != nil {
+    _ = producer.AbortTransaction()
+    log.Fatal(err)
+}
+if err := producer.SendTransactional(ctx, &streamline.Message{
+    Topic: "orders", Key: []byte("k2"), Value: []byte("v2"),
+}); err != nil {
+    _ = producer.AbortTransaction()
+    log.Fatal(err)
+}
 
 results, err := producer.CommitTransaction(ctx)
 if err != nil {
-    producer.AbortTransaction()
+    // CommitTransaction may return partial result slots when individual sends fail.
+    log.Printf("Commit completed with errors: %v", err)
 }
 ```
 
-> **Note:** Transactions use client-side buffering — messages are collected locally and sent as
-> a batch on commit. This provides all-or-nothing delivery semantics at the client level.
-> If you need broker-level exactly-once semantics, combine with idempotent producers.
+> **Note:** This API is not an atomic broker transaction. `CommitTransaction`
+> drains the local buffer through `SendBatch`, which sends records individually
+> and may return partial results. Enable `Producer.Idempotent` to prevent
+> duplicate retries, but do not treat this helper as all-or-nothing delivery.
 
 ## Consumer
 
@@ -207,6 +235,9 @@ for {
 
 ```go
 messages, err := consumer.Poll(ctx, 100, 5*time.Second)
+if err != nil {
+    log.Fatal(err)
+}
 for _, msg := range messages {
     log.Printf("Received: %s", string(msg.Value))
 }
@@ -231,6 +262,9 @@ err := client.Admin.CreateTopic(ctx, streamline.TopicConfig{
 
 ```go
 topics, err := client.Admin.ListTopics(ctx)
+if err != nil {
+    log.Fatal(err)
+}
 for _, t := range topics {
     log.Printf("Topic: %s, Partitions: %d", t.Name, t.Partitions)
 }
@@ -240,6 +274,9 @@ for _, t := range topics {
 
 ```go
 info, partitions, err := client.Admin.DescribeTopic(ctx, "my-topic")
+if err != nil {
+    log.Fatal(err)
+}
 log.Printf("Topic: %s", info.Name)
 for _, p := range partitions {
     log.Printf("  Partition %d: leader=%d, replicas=%v", p.ID, p.Leader, p.Replicas)
@@ -271,10 +308,16 @@ admin := streamline.NewHTTPAdmin("http://localhost:9094")
 
 // Cluster overview
 cluster, err := admin.ClusterInfo(ctx)
+if err != nil {
+    log.Fatal(err)
+}
 fmt.Printf("Cluster: %s, Brokers: %d\n", cluster.ClusterID, len(cluster.Brokers))
 
 // Consumer group lag monitoring
 lag, err := admin.ConsumerGroupLag(ctx, "my-group")
+if err != nil {
+    log.Fatal(err)
+}
 fmt.Printf("Total lag: %d\n", lag.TotalLag)
 for _, p := range lag.Partitions {
     fmt.Printf("  %s:%d lag=%d\n", p.Topic, p.Partition, p.Lag)
@@ -282,15 +325,24 @@ for _, p := range lag.Partitions {
 
 // Message inspection
 messages, err := admin.InspectMessages(ctx, "events", 0, nil, 10)
+if err != nil {
+    log.Fatal(err)
+}
 for _, m := range messages {
     fmt.Printf("offset=%d key=%v value=%s\n", m.Offset, m.Key, m.Value)
 }
 
 // Latest messages
 latest, err := admin.LatestMessages(ctx, "events", 5)
+if err != nil {
+    log.Fatal(err)
+}
 
 // Server metrics
 metrics, err := admin.MetricsHistory(ctx)
+if err != nil {
+    log.Fatal(err)
+}
 for _, m := range metrics {
     fmt.Printf("%s=%f %v\n", m.Name, m.Value, m.Labels)
 }
@@ -322,6 +374,9 @@ opts := streamline.QueryOptions{
     MaxRows:   100,
 }
 result, err := queryClient.QueryWithOptions(ctx, "SELECT * FROM topic('events') ORDER BY offset DESC", opts)
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Explain Query Plan
@@ -335,6 +390,42 @@ fmt.Println(plan)
 ```
 
 ## Configuration
+
+Every `Config` field is optional except `Brokers`. Invalid zero-valued fields
+such as connection/session timeouts receive safe defaults, while producer
+fields where zero has Kafka meaning retain that value. Start from
+`streamline.DefaultConfig()` when you want all recommended SDK defaults.
+
+```go
+client, err := streamline.NewClient(streamline.Config{
+    Brokers: []string{"localhost:9092"}, // everything else uses the defaults below
+})
+```
+
+| Field | Default |
+|-------|---------|
+| `ClientID` | `streamline-go-client` |
+| `Version` | Kafka 2.8.0 |
+| `ConnectionTimeout` | `10s` |
+| `MetadataRefreshInterval` | `5m` |
+| `HTTPEndpoint` | `http://localhost:9094` |
+| `Producer.MaxMessageBytes` | `1048576` (1 MB) |
+| `Producer.RequiredAcks` | `-1` (all replicas) |
+| `Producer.BatchSize` | `16384` |
+| `Producer.BatchTimeout` | `10ms` |
+| `Producer.Retries` | `3` |
+| `Consumer.AutoOffsetReset` | `latest` |
+| `Consumer.SessionTimeout` | `30s` |
+| `Consumer.HeartbeatInterval` | `3s` (shrunk to `SessionTimeout/3` for short session timeouts) |
+| `Consumer.MaxPollRecords` | `500` |
+
+`Producer.RequiredAcks`, `BatchSize`, `BatchTimeout`, and `Retries` all assign
+meaning to zero and are therefore left as-is in a partial config. A zero-valued
+`ProducerConfig` uses fire-and-forget acknowledgements, disables size/time
+batch flushing, and disables retries. Start from `streamline.DefaultConfig()`
+to use the table's recommended values. Enabling `Producer.Idempotent` promotes
+zero acknowledgements/retries to the required safe defaults because idempotent
+produces cannot run with weaker settings.
 
 ### Producer Configuration
 
@@ -527,7 +618,11 @@ When the circuit is open, `Allow()` returns `false` and operations are rejected 
 
 ## Requirements
 
-- Go 1.22 or later
+- Go 1.25.14 or later; use a currently supported Go release with all security
+  patches applied
+- The separate `testcontainers/` module requires Go 1.26.0 or later because its
+  security-fixed `golang.org/x/crypto` dependency no longer supports Go 1.25;
+  use Go 1.26.6 or a newer patched release
 - Streamline server 0.2.0 or later
 
 ## Examples
@@ -541,6 +636,7 @@ The [`examples/`](examples/) directory contains runnable examples:
 | [Schema Registry](examples/schema_registry/main.go) | Schema registration and validation |
 | [Circuit Breaker](examples/circuit_breaker/main.go) | Resilient production with circuit breaker |
 | [Security](examples/security/main.go) | TLS and SASL authentication |
+| [Agent Memory](examples/agent_memory/main.go) | Moonshot agent memory remember/recall |
 
 Run any example:
 
@@ -548,6 +644,142 @@ Run any example:
 go run examples/main.go
 go run examples/circuit_breaker/main.go
 ```
+
+The README API snippets are mirrored by compile-only Go examples in
+`streamline/examples_test.go`, `streamline/moonshot/examples_test.go`,
+`embedded/examples_test.go`, and `testcontainers/example_test.go`. Verify the
+runnable programs and compile coverage without contacting a server:
+
+```bash
+make examples
+```
+
+## Embedded Mode (CGO)
+
+The [`embedded`](embedded/) package runs Streamline in-process through the
+native C ABI instead of talking to a server over the network. Because it links
+against `libstreamline`, it is compiled only when the `embedded` build tag is
+set and CGO is enabled:
+
+```bash
+CGO_ENABLED=1 \
+CGO_CFLAGS="-I/path/to/streamline/include" \
+CGO_LDFLAGS="-L/path/to/streamline/lib" \
+go build -tags embedded ./...
+```
+
+```go
+import "github.com/streamlinelabs/streamline-go-sdk/embedded"
+
+instance, err := embedded.New(embedded.Config{InMemory: true})
+if err != nil {
+    log.Fatal(err)
+}
+defer instance.Close()
+
+if err := instance.CreateTopic("events", 1); err != nil {
+    log.Fatal(err)
+}
+if err := instance.Produce("events", []byte("hello")); err != nil {
+    log.Fatal(err)
+}
+msg, err := instance.Consume("events", 5*time.Second)
+if err != nil {
+    log.Fatal(err)
+}
+if msg != nil {
+    log.Printf("Consumed offset %d: %s", msg.Offset, msg.Value)
+}
+```
+
+Without the build tag the package still compiles and exposes the same API, but
+every operation returns `embedded.ErrNotEnabled`. That keeps `go build ./...`
+and `go test ./...` self-contained for users of the network client.
+
+## Testing
+
+Unit tests are self-contained — they never contact a broker, a server, or
+Docker:
+
+```bash
+go test ./...
+```
+
+Run the pinned vulnerability scanner for both Go modules:
+
+```bash
+make vuln
+```
+
+The separate `testcontainers/` module is also part of the default build/test
+gate but skips Docker startup unless explicitly enabled. It requires Go 1.26.0
+or later; CI currently uses Go 1.26.6:
+
+```bash
+cd testcontainers
+go test ./...
+
+STREAMLINE_TESTCONTAINERS_INTEGRATION=1 \
+STREAMLINE_TEST_IMAGE=ghcr.io/streamlinelabs/streamline@sha256:<digest> \
+go test -timeout 2m ./...
+```
+
+The conformance suite (46 tests) runs against a live Streamline server and is
+guarded by the `integration` build tag, so it is neither compiled nor run by
+default:
+
+```bash
+docker compose -f docker-compose.test.yml up -d
+go test -tags=integration -timeout 120s ./...
+docker compose -f docker-compose.test.yml down -v
+
+# or, equivalently
+make integration-test
+```
+
+The GitHub `Integration Tests` workflow requires repository administrators to
+set the `STREAMLINE_INTEGRATION_IMAGE` Actions variable to an immutable
+`repository@sha256:<64-lowercase-hex>` image reference. It validates the pulled
+digest before starting the fixture and deliberately has no mutable tag default.
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `STREAMLINE_BOOTSTRAP` | Kafka bootstrap address | `localhost:9092` |
+| `STREAMLINE_HTTP` | HTTP API base URL | `http://localhost:9094` |
+| `STREAMLINE_REQUIRE_INTEGRATION` | Fail instead of skip when the live server is unavailable | unset |
+| `STREAMLINE_AUTH_ENABLED` | Set to `true` to require auth conformance | unset |
+| `STREAMLINE_AUTH_MODES` | Comma-separated `plain`, `scram-sha-256`, `scram-sha-512`, `tls`, and/or `mtls` | unset |
+| `STREAMLINE_SKIP_INTEGRATION` | Skip the suite even when compiled in | unset |
+
+Passing `-short` also skips the suite, so `go test -short -tags=integration ./...`
+compiles it without needing a server.
+
+### Authentication Conformance
+
+Authentication is feature-gated in the Streamline server. This repository does
+not contain an auth-enabled server binary, users file, or certificate authority,
+and the standard 0.4.0 integration image must not be treated as an auth fixture.
+The manual
+[`Auth Conformance`](.github/workflows/auth-conformance.yml) workflow therefore
+targets an externally managed auth-enabled server through the protected
+`auth-conformance` GitHub environment.
+
+When `STREAMLINE_AUTH_ENABLED=true`, the tests fail closed:
+
+- `STREAMLINE_AUTH_MODES` must explicitly select at least one supported mode.
+- SASL modes require `STREAMLINE_AUTH_USERNAME` and
+  `STREAMLINE_AUTH_PASSWORD`.
+- TLS modes require `STREAMLINE_AUTH_TLS_BOOTSTRAP` and
+  `STREAMLINE_AUTH_CA_FILE`.
+- mTLS additionally requires `STREAMLINE_AUTH_CLIENT_CERT_FILE` and
+  `STREAMLINE_AUTH_CLIENT_KEY_FILE`.
+- `STREAMLINE_AUTH_SASL_TLS_ENABLED=true` applies the configured CA to SASL
+  connections.
+- A missing server, invalid boolean, missing fixture input, or selected-mode
+  failure fails the run instead of being skipped.
+
+The external TLS certificate must contain a subject alternative name matching
+the hostname in its bootstrap address.
 
 ## Moonshot Features
 
@@ -572,11 +804,12 @@ for _, hit := range results {
 Verify cryptographic provenance attestations attached to records by data contracts.
 
 ```go
-verifier, err := streamline.NewVerifier(publicKeyBytes)
+publicKey := ed25519.PublicKey(publicKeyBytes)
+verifier := streamline.NewVerifier(publicKey)
+result, err := verifier.Verify(record)
 if err != nil {
     log.Fatal(err)
 }
-result, err := verifier.Verify(record)
 log.Printf("Verified: %v, Producer: %s", result.Verified, result.ProducerID)
 ```
 
@@ -585,9 +818,31 @@ log.Printf("Verified: %v, Producer: %s", result.Verified, result.ProducerID)
 Use Streamline as persistent memory for AI agents via the MCP protocol.
 
 ```go
-memory := streamline.NewMemoryClient("http://localhost:9094/mcp/v1")
-err := memory.Remember(ctx, "user prefers dark mode", streamline.MemoryTags("preferences"))
-results, err := memory.Recall(ctx, "user preferences", 5)
+import "github.com/streamlinelabs/streamline-go-sdk/streamline/moonshot"
+
+memory, err := moonshot.NewMemoryClient(moonshot.Options{
+    HTTPURL: "http://localhost:9094",
+})
+if err != nil {
+    log.Fatal(err)
+}
+_, err = memory.Remember(ctx, moonshot.RememberParams{
+    AgentID: "assistant",
+    Kind:    moonshot.MemoryFact,
+    Content: "user prefers dark mode",
+    Tags:    []string{"preferences"},
+})
+if err != nil {
+    log.Fatal(err)
+}
+results, err := memory.Recall(ctx, moonshot.RecallParams{
+    AgentID: "assistant",
+    Query:   "user preferences",
+    K:       5,
+})
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ### Branched Streams
@@ -595,12 +850,28 @@ results, err := memory.Recall(ctx, "user preferences", 5)
 Create topic branches for replay, A/B testing, or counterfactual analysis.
 
 ```go
-branch, err := client.Admin.CreateBranch(ctx, "events", "experiment-v2")
+import "github.com/streamlinelabs/streamline-go-sdk/streamline/moonshot"
+
+branches, err := moonshot.NewBranchAdminClient(moonshot.Options{
+    HTTPURL: "http://localhost:9094",
+})
 if err != nil {
     log.Fatal(err)
 }
-consumer, err := client.NewConsumer(ctx, "branch-group", []string{branch.Topic})
-messages, errors := consumer.Start(ctx)
+branch, err := branches.Create(
+    ctx,
+    "events",
+    "experiment-v2",
+    []int64{0},
+    moonshot.CreateBranchOptions{CreatedBy: "example"},
+)
+if err != nil {
+    log.Fatal(err)
+}
+_, err = branches.Append(ctx, branch.ID, 0, `{"variant":"v2"}`)
+if err != nil {
+    log.Fatal(err)
+}
 ```
 
 ## Contributing
@@ -613,11 +884,8 @@ Apache-2.0
 
 ## Security
 
-To report a security vulnerability, please email **security@streamline.dev**.
-Do **not** open a public issue.
+To report a vulnerability, follow this repository's
+[Security Policy](SECURITY.md). Do **not** open a public issue.
 
-See the [Security Policy](https://github.com/streamlinelabs/streamline/blob/main/SECURITY.md) for details.
-
-<!-- add godoc examples for consumer API -->
-
-
+General usage questions and non-sensitive bug reports are covered by the
+[Support Policy](SUPPORT.md).

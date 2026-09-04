@@ -61,7 +61,7 @@ func TestStreamlineErrorUnwrap(t *testing.T) {
 
 func TestErrorsAs(t *testing.T) {
 	err := NewConnectionError("cannot reach server", nil)
-	var wrapped error = fmt.Errorf("wrapper: %w", err)
+	wrapped := fmt.Errorf("wrapper: %w", err)
 
 	var se *StreamlineError
 	if !errors.As(wrapped, &se) {

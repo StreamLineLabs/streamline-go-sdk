@@ -155,6 +155,17 @@ func TestValidateTLSConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("populated disabled TLS is rejected", func(t *testing.T) {
+		cfg := &TLSConfig{CAFile: "/tmp/ca.pem"}
+		err := validateTLSConfig(cfg)
+		if err == nil {
+			t.Fatal("expected error when TLS settings are provided but TLS is disabled")
+		}
+		if !strings.Contains(err.Error(), "TLS is disabled") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
 	t.Run("cert without key is rejected", func(t *testing.T) {
 		cfg := &TLSConfig{Enable: true, CertFile: "/tmp/cert.pem"}
 		err := validateTLSConfig(cfg)

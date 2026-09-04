@@ -12,13 +12,18 @@
 //	defer client.Close()
 //
 //	// Produce a message
-//	err = client.Producer.Send(ctx, "my-topic", nil, []byte("Hello, World!"))
+//	result, err := client.Producer.Send(ctx, "my-topic", nil, []byte("Hello, World!"))
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	log.Printf("produced to partition %d at offset %d", result.Partition, result.Offset)
 package streamline
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,151 +32,6 @@ import (
 
 	"github.com/IBM/sarama"
 )
-
-// Config holds the configuration for a Streamline client.
-type Config struct {
-	// Brokers is a list of broker addresses.
-	Brokers []string
-
-	// ClientID identifies this client to the server.
-	ClientID string
-
-	// Version specifies the Kafka protocol version to use.
-	Version sarama.KafkaVersion
-
-	// SASL configuration for authentication.
-	SASL *SASLConfig
-
-	// TLS configuration for secure connections.
-	TLS *TLSConfig
-
-	// Producer configuration.
-	Producer ProducerConfig
-
-	// Consumer configuration.
-	Consumer ConsumerConfig
-
-	// ConnectionTimeout is the timeout for connecting to brokers.
-	ConnectionTimeout time.Duration
-
-	// MetadataRefreshInterval is how often to refresh cluster metadata.
-	MetadataRefreshInterval time.Duration
-
-	// CircuitBreaker configures the circuit breaker. Nil means disabled (opt-in).
-	CircuitBreaker *CircuitBreakerConfig
-
-	// HTTPEndpoint is the base URL for the Streamline HTTP admin API (port 9094).
-	// Used by moonshot features (semantic search, memory, branches, attestation).
-	// Default: "http://localhost:9094"
-	HTTPEndpoint string
-}
-
-// SASLConfig holds SASL authentication configuration.
-type SASLConfig struct {
-	// Mechanism is the SASL mechanism (PLAIN, SCRAM-SHA-256, SCRAM-SHA-512).
-	Mechanism string
-
-	// Username for authentication.
-	Username string
-
-	// Password for authentication.
-	Password string
-}
-
-// TLSConfig holds TLS configuration.
-type TLSConfig struct {
-	// Enable TLS.
-	Enable bool
-
-	// CertFile is the path to the client certificate.
-	CertFile string
-
-	// KeyFile is the path to the client key.
-	KeyFile string
-
-	// CAFile is the path to the CA certificate.
-	CAFile string
-
-	// InsecureSkipVerify disables certificate verification.
-	InsecureSkipVerify bool
-}
-
-// ProducerConfig holds producer-specific configuration.
-type ProducerConfig struct {
-	// MaxMessageBytes is the maximum message size.
-	MaxMessageBytes int
-
-	// RequiredAcks specifies the acknowledgment level.
-	// 0 = no acks, 1 = leader only, -1 = all replicas.
-	RequiredAcks int16
-
-	// Compression specifies the compression codec.
-	// 0 = none, 1 = gzip, 2 = snappy, 3 = lz4, 4 = zstd.
-	Compression int8
-
-	// BatchSize is the number of messages to batch together.
-	BatchSize int
-
-	// BatchTimeout is how long to wait before flushing a partial batch.
-	BatchTimeout time.Duration
-
-	// Idempotent enables exactly-once semantics.
-	Idempotent bool
-
-	// Retries is the number of times to retry failed sends.
-	Retries int
-}
-
-// ConsumerConfig holds consumer-specific configuration.
-type ConsumerConfig struct {
-	// GroupID is the consumer group ID.
-	GroupID string
-
-	// AutoOffsetReset specifies where to start consuming.
-	// "earliest" or "latest".
-	AutoOffsetReset string
-
-	// SessionTimeout is the timeout for consumer group sessions.
-	SessionTimeout time.Duration
-
-	// HeartbeatInterval is how often to send heartbeats.
-	HeartbeatInterval time.Duration
-
-	// MaxPollRecords is the maximum records per poll.
-	MaxPollRecords int
-
-	// IsolationLevel specifies the transaction isolation level.
-	// 0 = read_uncommitted, 1 = read_committed.
-	IsolationLevel int8
-}
-
-// DefaultConfig returns a Config with sensible defaults.
-func DefaultConfig() Config {
-	return Config{
-		Brokers:                 []string{"localhost:9092"},
-		ClientID:                "streamline-go-client",
-		Version:                 sarama.V2_8_0_0,
-		ConnectionTimeout:       10 * time.Second,
-		MetadataRefreshInterval: 5 * time.Minute,
-		HTTPEndpoint:            "http://localhost:9094",
-		Producer: ProducerConfig{
-			MaxMessageBytes: 1048576, // 1MB
-			RequiredAcks:    -1,     // All replicas
-			Compression:     0,      // None
-			BatchSize:       16384,
-			BatchTimeout:    10 * time.Millisecond,
-			Idempotent:      false,
-			Retries:         3,
-		},
-		Consumer: ConsumerConfig{
-			AutoOffsetReset:   "latest",
-			SessionTimeout:    30 * time.Second,
-			HeartbeatInterval: 3 * time.Second,
-			MaxPollRecords:    500,
-			IsolationLevel:    0, // Read uncommitted
-		},
-	}
-}
 
 // Client is the main entry point for interacting with Streamline.
 type Client struct {
@@ -189,63 +49,20 @@ type Client struct {
 }
 
 // NewClient creates a new Streamline client.
+//
+// Invalid zero-valued Config fields receive safe defaults. Meaningful producer
+// zero values retain their Kafka semantics. Start from DefaultConfig to use all
+// recommended SDK defaults.
 func NewClient(config Config) (*Client, error) {
 	if len(config.Brokers) == 0 {
 		return nil, fmt.Errorf("streamline: at least one broker address is required")
 	}
 
-	saramaConfig := sarama.NewConfig()
+	config = config.withDefaults()
 
-	// Basic configuration
-	saramaConfig.ClientID = config.ClientID
-	saramaConfig.Version = config.Version
-	saramaConfig.Net.DialTimeout = config.ConnectionTimeout
-	saramaConfig.Metadata.RefreshFrequency = config.MetadataRefreshInterval
-
-	// Producer configuration
-	saramaConfig.Producer.MaxMessageBytes = config.Producer.MaxMessageBytes
-	saramaConfig.Producer.RequiredAcks = sarama.RequiredAcks(config.Producer.RequiredAcks)
-	saramaConfig.Producer.Compression = sarama.CompressionCodec(config.Producer.Compression)
-	saramaConfig.Producer.Flush.Bytes = config.Producer.BatchSize
-	saramaConfig.Producer.Flush.Frequency = config.Producer.BatchTimeout
-	saramaConfig.Producer.Idempotent = config.Producer.Idempotent
-	saramaConfig.Producer.Retry.Max = config.Producer.Retries
-	saramaConfig.Producer.Return.Successes = true
-	saramaConfig.Producer.Return.Errors = true
-
-	// Consumer configuration
-	if config.Consumer.AutoOffsetReset == "earliest" {
-		saramaConfig.Consumer.Offsets.Initial = sarama.OffsetOldest
-	} else {
-		saramaConfig.Consumer.Offsets.Initial = sarama.OffsetNewest
-	}
-	saramaConfig.Consumer.Group.Session.Timeout = config.Consumer.SessionTimeout
-	saramaConfig.Consumer.Group.Heartbeat.Interval = config.Consumer.HeartbeatInterval
-	saramaConfig.Consumer.MaxProcessingTime = 100 * time.Millisecond
-	saramaConfig.Consumer.IsolationLevel = sarama.IsolationLevel(config.Consumer.IsolationLevel)
-
-	// SASL configuration
-	if config.SASL != nil {
-		saramaConfig.Net.SASL.Enable = true
-		saramaConfig.Net.SASL.User = config.SASL.Username
-		saramaConfig.Net.SASL.Password = config.SASL.Password
-
-		switch config.SASL.Mechanism {
-		case "PLAIN":
-			saramaConfig.Net.SASL.Mechanism = sarama.SASLTypePlaintext
-		case "SCRAM-SHA-256":
-			saramaConfig.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA256
-			saramaConfig.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
-				return &XDGSCRAMClient{HashGeneratorFcn: SHA256}
-			}
-		case "SCRAM-SHA-512":
-			saramaConfig.Net.SASL.Mechanism = sarama.SASLTypeSCRAMSHA512
-			saramaConfig.Net.SASL.SCRAMClientGeneratorFunc = func() sarama.SCRAMClient {
-				return &XDGSCRAMClient{HashGeneratorFcn: SHA512}
-			}
-		default:
-			return nil, fmt.Errorf("streamline: unsupported SASL mechanism: %s", config.SASL.Mechanism)
-		}
+	saramaConfig, err := buildSaramaConfig(config)
+	if err != nil {
+		return nil, err
 	}
 
 	// Create sarama client
@@ -266,17 +83,23 @@ func NewClient(config Config) (*Client, error) {
 	}
 
 	// Initialize producer
-	c.Producer, err = newProducer(client, saramaConfig, c.circuitBreaker)
+	c.Producer, err = newProducer(client, c.circuitBreaker)
 	if err != nil {
-		client.Close()
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return nil, fmt.Errorf("streamline: failed to create producer: %w", err)
 	}
 
 	// Initialize admin
 	c.Admin, err = newAdmin(client)
 	if err != nil {
-		c.Producer.Close()
-		client.Close()
+		if closeErr := c.Producer.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
+		if closeErr := client.Close(); closeErr != nil {
+			err = errors.Join(err, closeErr)
+		}
 		return nil, fmt.Errorf("streamline: failed to create admin client: %w", err)
 	}
 
@@ -341,23 +164,13 @@ func (c *Client) Close() error {
 	}
 	return nil
 }
-// extract config validation into helper
 
 // httpEndpoint returns the configured HTTP endpoint, falling back to the default.
 func (c *Client) httpEndpoint() string {
 	if c.config.HTTPEndpoint != "" {
 		return c.config.HTTPEndpoint
 	}
-	return "http://localhost:9094"
-}
-
-
-// validateResponse checks that a protocol response has valid structure.
-func validateResponse(data []byte) error {
-	if len(data) < 4 {
-		return fmt.Errorf("malformed response: expected at least 4 bytes, got %d", len(data))
-	}
-	return nil
+	return defaultHTTPEndpoint
 }
 
 // ── Moonshot: Agent Memory (M1) ────────────────────────────────────
@@ -366,7 +179,7 @@ func validateResponse(data []byte) error {
 type MemoryEntry struct {
 	AgentID    string   `json:"agent_id"`
 	Content    string   `json:"content"`
-	Kind       string   `json:"kind"`       // "fact", "observation", "preference", "procedure"
+	Kind       string   `json:"kind"` // "fact", "observation", "preference", "procedure"
 	Importance float64  `json:"importance"`
 	Tags       []string `json:"tags,omitempty"`
 	Namespace  string   `json:"namespace,omitempty"` // shared namespace for multi-agent memory
@@ -390,7 +203,7 @@ type MemoryHit struct {
 }
 
 // MemoryRemember stores a memory entry via the Streamline HTTP memory API.
-func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) error {
+func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) (err error) {
 	endpoint := c.httpEndpoint()
 
 	payload, err := json.Marshal(entry)
@@ -410,17 +223,20 @@ func (c *Client) MemoryRemember(ctx context.Context, entry MemoryEntry) error {
 	if err != nil {
 		return fmt.Errorf("streamline: remember request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close remember response body") }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		body, _ := io.ReadAll(resp.Body)
+		body, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			return fmt.Errorf("streamline: remember failed (HTTP %d) and response body could not be read: %w", resp.StatusCode, readErr)
+		}
 		return fmt.Errorf("streamline: remember failed (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 	return nil
 }
 
 // MemoryRecall retrieves memories by semantic similarity via the Streamline HTTP memory API.
-func (c *Client) MemoryRecall(ctx context.Context, query MemoryQuery) ([]MemoryHit, error) {
+func (c *Client) MemoryRecall(ctx context.Context, query MemoryQuery) (_ []MemoryHit, err error) {
 	endpoint := c.httpEndpoint()
 
 	if query.K == 0 {
@@ -444,7 +260,7 @@ func (c *Client) MemoryRecall(ctx context.Context, query MemoryQuery) ([]MemoryH
 	if err != nil {
 		return nil, fmt.Errorf("streamline: recall request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { err = joinClose(err, resp.Body, "close recall response body") }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

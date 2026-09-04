@@ -23,6 +23,14 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run holds the example body so deferred cleanup still runs when it fails:
+// log.Fatal in main would skip every pending defer.
+func run() error {
 	config := streamline.DefaultConfig()
 	brokers := os.Getenv("STREAMLINE_BOOTSTRAP_SERVERS")
 	if brokers == "" {
@@ -38,9 +46,13 @@ func main() {
 
 	client, err := streamline.NewClient(config)
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Printf("Failed to close client: %v", closeErr)
+		}
+	}()
 
 	ctx := context.Background()
 
@@ -48,6 +60,8 @@ func main() {
 	multiAgentSharedMemory(ctx, client)
 
 	fmt.Println("\nDone!")
+
+	return nil
 }
 
 func singleAgentMemory(ctx context.Context, client *streamline.Client) {
@@ -87,7 +101,7 @@ func singleAgentMemory(ctx context.Context, client *streamline.Client) {
 		log.Fatalf("Failed to remember: %v", err)
 	}
 
-	fmt.Println("Stored 3 memories\n")
+	fmt.Print("Stored 3 memories\n\n")
 
 	// Recall by semantic similarity
 	fmt.Println("--- Recall: 'why did we pick our database?' ---")

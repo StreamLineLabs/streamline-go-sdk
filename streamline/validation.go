@@ -44,7 +44,17 @@ func validateTopicName(topic string) error {
 // before attempting a connection. This catches misconfigurations early with
 // clear error messages rather than cryptic connection failures.
 func validateTLSConfig(cfg *TLSConfig) error {
-	if cfg == nil || !cfg.Enable {
+	if cfg == nil {
+		return nil
+	}
+	if !cfg.Enable {
+		if cfg.CertFile != "" || cfg.KeyFile != "" || cfg.CAFile != "" || cfg.InsecureSkipVerify {
+			return &StreamlineError{
+				Code:    ErrConfiguration,
+				Message: "TLS settings were provided but TLS is disabled",
+				Hint:    "Set TLS.Enable to true, or remove the TLS certificate and verification settings",
+			}
+		}
 		return nil
 	}
 

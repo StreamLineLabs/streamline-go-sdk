@@ -1,27 +1,320 @@
-name: Release
-on:
-  push:
-    tags: ['v*']
-permissions:
-  contents: write
-jobs:
-  release:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
-      - run: go build ./...
-      - run: go test ./...
-      - name: Generate SBOM
-        run: |
-          go install github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@latest
-          cyclonedx-gomod mod -json -output sbom.cdx.json 2>/dev/null || true
-      - uses: softprops/action-gh-release@v2
-        with:
-          generate_release_notes: true
-          files: |
-            sbom.cdx.json
+name: Release Promotion
 
-# Signing step configured
+# Replaces the previous tag-push-triggered release: pushing a `v*` tag used
+# to be what *started* verification, which meant the tag (and therefore a
+# public, citable release ref) already existed before any check had run. If
+# a check failed after that point, the tag was already published — the
+# checks could not have "prevented" anything, only reported a bad release
+# after the fact.
+#
+# Promotion now runs entirely from `main`, before any tag exists. The tag
+# and GitHub release are the *last* two steps, gated behind every build,
+# test, security, live-conformance, artifact, SBOM, checksum, signing, and
+# provenance check succeeding, and behind a protected-environment approval.
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: >-
+          SDK version to promote, without a leading "v" (must match the
+          streamline.Version constant), e.g. 0.4.0
+        required: true
+        type: string
+      release_tag:
+        description: >-
+          Git tag to create, e.g. v0.4.0 (must equal "v<release_version>")
+        required: true
+        type: string
+      server_image_digest:
+        description: >-
+          Immutable Streamline server image reference pinned by digest for
+          the live conformance fixture, e.g.
+          ghcr.io/streamlinelabs/streamline@sha256:<64-hex-digest>. A
+          mutable tag reference is rejected.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-promotion
+  cancel-in-progress: false
+
+jobs:
+  # Runs every check with no ability to mutate repository state: no tag is
+  # created or pushed, and no GitHub release is created in this job.
+  validate-and-verify:
+    name: Validate, build, test, and verify (pre-tag)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    env:
+      RELEASE_VERSION: ${{ inputs.release_version }}
+      RELEASE_TAG: ${{ inputs.release_tag }}
+      SERVER_IMAGE_DIGEST: ${{ inputs.server_image_digest }}
+    steps:
+      - uses: actions/checkout@v4.4.0
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          # The nested Testcontainers module requires Go 1.26 because the
+          # security-fixed x/crypto release no longer supports Go 1.25.
+          go-version: "1.26.6"
+          cache-dependency-path: |
+            go.sum
+            testcontainers/go.sum
+
+      - name: Validate promotion inputs
+        shell: bash
+        run: scripts/release/validate-inputs.sh
+
+      - name: Verify release tag matches SDK version
+        env:
+          STREAMLINE_RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: bash
+        run: go test ./streamline -run '^TestReleaseTagMatchesVersion$' -count=1
+
+      - name: Verify source commit is the current, reachable, releasable tip of main
+        env:
+          TARGET_SHA: ${{ github.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          scripts/release/verify-source.sh
+
+      - name: Verify modules and examples
+        shell: bash
+        run: |
+          set -euo pipefail
+          go mod verify
+          go build ./...
+          go vet ./...
+          go vet -tags=integration ./...
+          go test -short -count=1 ./...
+          go build ./examples/...
+
+          (
+            cd testcontainers
+            go mod verify
+            go build ./...
+            go vet ./...
+            go test -count=1 ./...
+          )
+
+      - name: Security scan (govulncheck, root module)
+        env:
+          GOTOOLCHAIN: go1.25.14
+        shell: bash
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+
+      - name: Security scan (govulncheck, testcontainers module)
+        env:
+          GOTOOLCHAIN: go1.26.6
+        shell: bash
+        working-directory: testcontainers
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 ./...
+
+      - name: Verify server image resolves to the requested immutable digest
+        shell: bash
+        run: scripts/release/verify-server-image.sh
+
+      - name: Start digest-pinned live conformance fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run -d \
+            --name streamline-release-fixture \
+            -p 9092:9092 \
+            -p 9094:9094 \
+            -e STREAMLINE_LOG_LEVEL=info \
+            "$SERVER_IMAGE_DIGEST"
+
+      - name: Wait for live fixture health check
+        shell: bash
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:9094/health > /dev/null 2>&1; then
+              echo "Streamline live fixture is healthy"
+              exit 0
+            fi
+            echo "Waiting for Streamline live fixture... ($i/30)"
+            sleep 2
+          done
+          echo "Streamline live fixture failed to become healthy" >&2
+          docker logs streamline-release-fixture || true
+          exit 1
+
+      - name: Run required conformance tests against the live fixture
+        shell: bash
+        env:
+          STREAMLINE_REQUIRE_INTEGRATION: "true"
+          STREAMLINE_BOOTSTRAP: localhost:9092
+          STREAMLINE_HTTP: http://localhost:9094
+        run: |
+          set -euo pipefail
+          go test -json -count=1 -tags=integration -run 'Test[PCGDSEF][0-9]' -timeout 180s ./... \
+            | tee "$RUNNER_TEMP/conformance.json"
+
+      # Runs even if the step above failed, so a false-"pass" (wrong -run
+      # pattern, missing build tag, or a fixture that never really ran any
+      # tests) is caught and reported clearly instead of silently letting a
+      # green `go test` exit code stand in for real conformance coverage.
+      - name: Enforce conformance executed-test-count guard
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          source scripts/release/lib.sh
+          min="$(expected_conformance_test_count conformance_test.go)"
+          scripts/release/count-executed-tests.sh --min "$min" --input "$RUNNER_TEMP/conformance.json"
+
+      - name: Stop live conformance fixture
+        if: always()
+        shell: bash
+        run: docker rm -f streamline-release-fixture || true
+
+      - name: Create source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          archive="streamline-go-sdk-${RELEASE_TAG}.tar.gz"
+          git archive \
+            --format=tar.gz \
+            --prefix="streamline-go-sdk-${RELEASE_TAG}/" \
+            --output="dist/$archive" \
+            "$GITHUB_SHA"
+          test -s "dist/$archive"
+
+      - name: Install pinned SBOM generator
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOBIN="$RUNNER_TEMP/bin" go install \
+            github.com/CycloneDX/cyclonedx-gomod/cmd/cyclonedx-gomod@v1.10.0
+          "$RUNNER_TEMP/bin/cyclonedx-gomod" version
+
+      - name: Generate and validate module SBOMs
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool="$RUNNER_TEMP/bin/cyclonedx-gomod"
+          root_sbom="$GITHUB_WORKSPACE/dist/streamline-go-sdk-${RELEASE_TAG}.sbom.cdx.json"
+          testcontainers_sbom="$GITHUB_WORKSPACE/dist/streamline-go-sdk-testcontainers-${RELEASE_TAG}.sbom.cdx.json"
+
+          "$tool" mod -json -test -type library -output "$root_sbom" "$GITHUB_WORKSPACE"
+          "$tool" mod -json -test -type library -output "$testcontainers_sbom" "$GITHUB_WORKSPACE/testcontainers"
+
+          test -s "$root_sbom"
+          test -s "$testcontainers_sbom"
+          python3 -c \
+            'import json, sys; [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:]]' \
+            "$root_sbom" "$testcontainers_sbom"
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd dist
+            sha256sum ./*.tar.gz ./*.cdx.json | sort -k2 > SHA256SUMS
+            test "$(wc -l < SHA256SUMS)" -eq 3
+          )
+
+      - name: Install pinned Cosign
+        uses: sigstore/cosign-installer@v4.1.2
+        with:
+          cosign-release: v3.1.3
+
+      - name: Sign and verify checksum manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          identity="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/.github/workflows/release.yml@$GITHUB_REF"
+
+          cosign sign-blob \
+            --yes \
+            --bundle dist/SHA256SUMS.sigstore.json \
+            dist/SHA256SUMS
+
+          cosign verify-blob \
+            --bundle dist/SHA256SUMS.sigstore.json \
+            --certificate-identity "$identity" \
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+            dist/SHA256SUMS
+
+      - name: Attest release artifact provenance
+        uses: actions/attest-build-provenance@v3.2.0
+        with:
+          subject-checksums: dist/SHA256SUMS
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: release-artifacts-${{ inputs.release_tag }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  # Only this job can mutate repository state (create/push the tag, create
+  # the GitHub release), and only after every check in validate-and-verify
+  # has succeeded. The `release-promotion` GitHub Environment should be
+  # configured with required reviewers in repository settings so a human
+  # approves the irreversible step, separate from — and after — the
+  # automated verification above.
+  promote-release:
+    name: Create and push release tag, publish GitHub release
+    needs: validate-and-verify
+    runs-on: ubuntu-latest
+    environment:
+      name: release-promotion
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4.4.0
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Download verified release artifacts
+        uses: actions/download-artifact@v8.0.1
+        with:
+          name: release-artifacts-${{ inputs.release_tag }}
+          path: dist
+
+      - name: Re-verify downloaded artifact checksums before publishing
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum -c SHA256SUMS
+
+      - name: Create and push annotated release tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${{ inputs.release_tag }}" -m "Release ${{ inputs.release_tag }}" "${{ github.sha }}"
+          git push origin "refs/tags/${{ inputs.release_tag }}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "${{ inputs.release_tag }}" \
+            dist/* \
+            --verify-tag \
+            --generate-notes \
+            --title "${{ inputs.release_tag }}"

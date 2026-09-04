@@ -37,6 +37,14 @@ const (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run holds the example body so deferred cleanup still runs when it fails:
+// log.Fatal in main would skip every pending defer.
+func run() error {
 	ctx := context.Background()
 
 	brokers := os.Getenv("STREAMLINE_BOOTSTRAP_SERVERS")
@@ -54,35 +62,38 @@ func main() {
 
 	client, err := streamline.NewClient(config)
 	if err != nil {
-		log.Fatalf("Failed to create client: %v", err)
+		return fmt.Errorf("failed to create client: %w", err)
 	}
-	defer client.Close()
+	defer func() {
+		if closeErr := client.Close(); closeErr != nil {
+			log.Printf("Failed to close client: %v", closeErr)
+		}
+	}()
 
 	// === 2. Create a schema registry client ===
 	registry := streamline.NewSchemaRegistryClient(registryURL)
 
 	// Ensure the topic exists
-	err = client.Admin.CreateTopic(ctx, streamline.TopicConfig{
+	if createErr := client.Admin.CreateTopic(ctx, streamline.TopicConfig{
 		Name:              topic,
 		NumPartitions:     3,
 		ReplicationFactor: 1,
-	})
-	if err != nil {
-		log.Printf("Warning: failed to create topic (may already exist): %v", err)
+	}); createErr != nil {
+		log.Printf("Warning: failed to create topic (may already exist): %v", createErr)
 	}
 
 	// === 3. Register an Avro schema ===
 	fmt.Println("=== Registering Schema ===")
 	schemaID, err := registry.RegisterSchema(subject, userSchema, streamline.SchemaTypeAvro)
 	if err != nil {
-		log.Fatalf("Failed to register schema: %v", err)
+		return fmt.Errorf("failed to register schema: %w", err)
 	}
 	fmt.Printf("Registered schema with id=%d for subject=%s\n", schemaID, subject)
 
 	// Retrieve the schema back by id
 	retrieved, err := registry.GetSchema(schemaID)
 	if err != nil {
-		log.Fatalf("Failed to get schema: %v", err)
+		return fmt.Errorf("failed to get schema: %w", err)
 	}
 	fmt.Printf("Retrieved schema: type=%s schema=%s\n", retrieved.Type, retrieved.Schema)
 
@@ -90,7 +101,7 @@ func main() {
 	fmt.Println("\n=== Checking Compatibility ===")
 	compatible, err := registry.CheckCompatibility(subject, userSchema, streamline.SchemaTypeAvro)
 	if err != nil {
-		log.Fatalf("Failed to check compatibility: %v", err)
+		return fmt.Errorf("failed to check compatibility: %w", err)
 	}
 	fmt.Printf("Schema compatible: %v\n", compatible)
 
@@ -105,17 +116,17 @@ func main() {
 			Email:     fmt.Sprintf("user%d@example.com", i),
 			CreatedAt: "2025-01-15T10:00:00Z",
 		}
-		value, err := json.Marshal(user)
-		if err != nil {
-			log.Fatalf("Failed to marshal user: %v", err)
+		value, marshalErr := json.Marshal(user)
+		if marshalErr != nil {
+			return fmt.Errorf("failed to marshal user: %w", marshalErr)
 		}
 
-		result, err := client.Producer.Send(ctx, topic,
+		result, sendErr := client.Producer.Send(ctx, topic,
 			[]byte(fmt.Sprintf("user-%d", i)),
 			value,
 		)
-		if err != nil {
-			log.Printf("Failed to send message: %v", err)
+		if sendErr != nil {
+			log.Printf("Failed to send message: %v", sendErr)
 			continue
 		}
 		fmt.Printf("Produced user-%d to partition %d at offset %d\n",
@@ -126,11 +137,15 @@ func main() {
 	fmt.Println("\n=== Consuming Messages with Schema ===")
 	consumer, err := client.NewConsumer(ctx, "go-schema-group", []string{topic})
 	if err != nil {
-		log.Fatalf("Failed to create consumer: %v", err)
+		return fmt.Errorf("failed to create consumer: %w", err)
 	}
-	defer consumer.Close()
+	defer func() {
+		if closeErr := consumer.Close(); closeErr != nil {
+			log.Printf("Failed to close consumer: %v", closeErr)
+		}
+	}()
 
-	messages, errors := consumer.Start(ctx)
+	messages, consumerErrs := consumer.Start(ctx)
 	consumed := 0
 
 	for consumed < 5 {
@@ -138,12 +153,12 @@ func main() {
 		case msg, ok := <-messages:
 			if !ok {
 				fmt.Println("Consumer channel closed")
-				return
+				return nil
 			}
 
 			var user User
-			if err := json.Unmarshal(msg.Value, &user); err != nil {
-				log.Printf("Failed to deserialize message: %v", err)
+			if unmarshalErr := json.Unmarshal(msg.Value, &user); unmarshalErr != nil {
+				log.Printf("Failed to deserialize message: %v", unmarshalErr)
 				continue
 			}
 
@@ -151,10 +166,12 @@ func main() {
 				msg.Partition, msg.Offset, user.ID, user.Name, user.Email)
 			consumed++
 
-		case err := <-errors:
-			log.Printf("Consumer error: %v", err)
+		case consumeErr := <-consumerErrs:
+			log.Printf("Consumer error: %v", consumeErr)
 		}
 	}
 
 	fmt.Println("\nDone!")
+
+	return nil
 }

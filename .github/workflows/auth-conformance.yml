@@ -1,0 +1,122 @@
+name: Auth Conformance
+
+on:
+  workflow_dispatch:
+    inputs:
+      bootstrap:
+        description: Kafka bootstrap address for SASL modes
+        required: true
+        type: string
+      tls_bootstrap:
+        description: Kafka bootstrap address for TLS and mTLS modes
+        required: false
+        type: string
+      auth_modes:
+        description: Comma-separated modes (plain,scram-sha-256,scram-sha-512,tls,mtls)
+        required: true
+        default: plain
+        type: string
+      sasl_tls_enabled:
+        description: Use the supplied CA certificate for SASL modes
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  auth-conformance:
+    runs-on: ubuntu-latest
+    environment: auth-conformance
+    env:
+      STREAMLINE_AUTH_ENABLED: "true"
+      STREAMLINE_REQUIRE_INTEGRATION: "true"
+      STREAMLINE_AUTH_MODES: ${{ inputs.auth_modes }}
+      STREAMLINE_BOOTSTRAP: ${{ inputs.bootstrap }}
+      STREAMLINE_AUTH_TLS_BOOTSTRAP: ${{ inputs.tls_bootstrap }}
+      STREAMLINE_AUTH_SASL_TLS_ENABLED: ${{ inputs.sasl_tls_enabled }}
+      STREAMLINE_AUTH_USERNAME: ${{ secrets.STREAMLINE_AUTH_USERNAME }}
+      STREAMLINE_AUTH_PASSWORD: ${{ secrets.STREAMLINE_AUTH_PASSWORD }}
+      STREAMLINE_AUTH_CA_PEM: ${{ secrets.STREAMLINE_AUTH_CA_PEM }}
+      STREAMLINE_AUTH_CLIENT_CERT_PEM: ${{ secrets.STREAMLINE_AUTH_CLIENT_CERT_PEM }}
+      STREAMLINE_AUTH_CLIENT_KEY_PEM: ${{ secrets.STREAMLINE_AUTH_CLIENT_KEY_PEM }}
+    steps:
+      - uses: actions/checkout@v4.4.0
+
+      - uses: actions/setup-go@v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Validate external auth fixture configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          selected_sasl=false
+          selected_tls=false
+          selected_mtls=false
+          IFS=',' read -ra modes <<< "$STREAMLINE_AUTH_MODES"
+          for raw_mode in "${modes[@]}"; do
+            mode="$(printf '%s' "$raw_mode" | tr '[:upper:]' '[:lower:]' | xargs)"
+            case "$mode" in
+              plain|scram-sha-256|scram-sha-512)
+                selected_sasl=true
+                ;;
+              tls)
+                selected_tls=true
+                ;;
+              mtls)
+                selected_tls=true
+                selected_mtls=true
+                ;;
+              *)
+                echo "Unsupported or empty auth mode: $raw_mode" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          if [[ "$selected_sasl" == "true" ]]; then
+            test -n "$STREAMLINE_BOOTSTRAP"
+            test -n "$STREAMLINE_AUTH_USERNAME"
+            test -n "$STREAMLINE_AUTH_PASSWORD"
+          fi
+          if [[ "$selected_tls" == "true" ]]; then
+            test -n "$STREAMLINE_AUTH_TLS_BOOTSTRAP"
+            test -n "$STREAMLINE_AUTH_CA_PEM"
+          fi
+          if [[ "$selected_mtls" == "true" ]]; then
+            test -n "$STREAMLINE_AUTH_CLIENT_CERT_PEM"
+            test -n "$STREAMLINE_AUTH_CLIENT_KEY_PEM"
+          fi
+          if [[ "$STREAMLINE_AUTH_SASL_TLS_ENABLED" == "true" ]]; then
+            test -n "$STREAMLINE_AUTH_CA_PEM"
+          fi
+
+      - name: Materialize ephemeral TLS files
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -m 700 -d "$RUNNER_TEMP/streamline-auth"
+          ca_file="$RUNNER_TEMP/streamline-auth/ca.pem"
+          client_cert_file="$RUNNER_TEMP/streamline-auth/client.pem"
+          client_key_file="$RUNNER_TEMP/streamline-auth/client-key.pem"
+          if [[ -n "$STREAMLINE_AUTH_CA_PEM" ]]; then
+            printf '%s' "$STREAMLINE_AUTH_CA_PEM" > "$ca_file"
+            chmod 600 "$ca_file"
+            printf 'STREAMLINE_AUTH_CA_FILE=%s\n' "$ca_file" >> "$GITHUB_ENV"
+          fi
+          if [[ -n "$STREAMLINE_AUTH_CLIENT_CERT_PEM" ]]; then
+            printf '%s' "$STREAMLINE_AUTH_CLIENT_CERT_PEM" > "$client_cert_file"
+            chmod 600 "$client_cert_file"
+            printf 'STREAMLINE_AUTH_CLIENT_CERT_FILE=%s\n' "$client_cert_file" >> "$GITHUB_ENV"
+          fi
+          if [[ -n "$STREAMLINE_AUTH_CLIENT_KEY_PEM" ]]; then
+            printf '%s' "$STREAMLINE_AUTH_CLIENT_KEY_PEM" > "$client_key_file"
+            chmod 600 "$client_key_file"
+            printf 'STREAMLINE_AUTH_CLIENT_KEY_FILE=%s\n' "$client_key_file" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run selected auth conformance tests
+        run: go test -v -count=1 -tags=integration -run '^TestA' -timeout 120s ./...

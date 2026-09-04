@@ -38,21 +38,21 @@ body:
     id: sdk-version
     attributes:
       label: SDK Version
-      placeholder: "0.3.0"
+      placeholder: "0.4.0"
     validations:
       required: true
   - type: input
     id: lang-version
     attributes:
       label: Go Version
-      placeholder: "e.g., 1.21"
+      placeholder: "e.g., 1.25.14"
     validations:
       required: true
   - type: input
     id: server-version
     attributes:
       label: Streamline Server Version
-      placeholder: "0.3.0"
+      placeholder: "0.4.0"
   - type: input
     id: os
     attributes:

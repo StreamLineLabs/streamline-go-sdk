@@ -36,3 +36,22 @@ updates:
     commit-message:
       prefix: "chore(deps):"
     open-pull-requests-limit: 10
+
+  # Nested Testcontainers module dependencies
+  - package-ecosystem: "gomod"
+    directory: "/testcontainers"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    groups:
+      testcontainers-go-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
+      testcontainers-go-major:
+        patterns: ["*"]
+        update-types: ["major"]
+    labels:
+      - "dependencies"
+    commit-message:
+      prefix: "chore(deps):"
+    open-pull-requests-limit: 10

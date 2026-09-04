@@ -67,7 +67,7 @@ func (v *Verifier) Verify(msg *ConsumerMessage) (VerificationResult, error) {
 	}
 
 	var env attestationEnvelope
-	if err := json.Unmarshal(decoded, &env); err != nil {
+	if unmarshalErr := json.Unmarshal(decoded, &env); unmarshalErr != nil {
 		return VerificationResult{Verified: false}, nil
 	}
 

@@ -4,8 +4,8 @@
 //
 // Run with:
 //
-//	SASL_USERNAME=admin SASL_PASSWORD=admin-secret go run examples/security/main.go
-//	SECURITY_MODE=scram SASL_USERNAME=admin SASL_PASSWORD=admin-secret go run examples/security/main.go
+//	SASL_USERNAME='<user>' SASL_PASSWORD='<password>' go run examples/security/main.go
+//	SECURITY_MODE=scram SASL_USERNAME='<user>' SASL_PASSWORD='<password>' go run examples/security/main.go
 //	SECURITY_MODE=tls CA_PATH=certs/ca.pem go run examples/security/main.go
 package main
 
@@ -18,85 +18,118 @@ import (
 	"github.com/streamlinelabs/streamline-go-sdk/streamline"
 )
 
-func saslPlainExample() {
+func saslPlainExample() error {
 	fmt.Println("SASL/PLAIN Authentication")
 	fmt.Println("----------------------------------------")
+
+	username, err := requiredEnv("SASL_USERNAME")
+	if err != nil {
+		return err
+	}
+	password, err := requiredEnv("SASL_PASSWORD")
+	if err != nil {
+		return err
+	}
 
 	client, err := streamline.NewClient(streamline.Config{
 		Brokers: []string{envOr("STREAMLINE_BOOTSTRAP_SERVERS", "localhost:9092")},
 		SASL: &streamline.SASLConfig{
 			Mechanism: "PLAIN",
-			Username:  envOr("SASL_USERNAME", "admin"),
-			Password:  envOr("SASL_PASSWORD", "admin-secret"),
+			Username:  username,
+			Password:  password,
 		},
 	})
 	if err != nil {
-		log.Fatalf("SASL/PLAIN connection failed: %v", err)
+		return fmt.Errorf("SASL/PLAIN connection failed: %w", err)
 	}
-	defer client.Close()
+	defer closeClient(client)
 
 	ctx := context.Background()
 	topics, err := client.Admin.ListTopics(ctx)
 	if err != nil {
-		log.Fatalf("List topics failed: %v", err)
+		return fmt.Errorf("list topics failed: %w", err)
 	}
 	fmt.Printf("  Connected with SASL/PLAIN. Topics: %v\n", topics)
 
 	result, err := client.Producer.Send(ctx, "secure-topic", nil, []byte("authenticated message"))
 	if err != nil {
-		log.Fatalf("Produce failed: %v", err)
+		return fmt.Errorf("produce failed: %w", err)
 	}
 	fmt.Printf("  Produced to partition=%d offset=%d\n\n", result.Partition, result.Offset)
+
+	return nil
 }
 
-func scramExample() {
+func scramExample() error {
 	fmt.Println("SASL/SCRAM-SHA-256 Authentication")
 	fmt.Println("----------------------------------------")
+
+	username, err := requiredEnv("SASL_USERNAME")
+	if err != nil {
+		return err
+	}
+	password, err := requiredEnv("SASL_PASSWORD")
+	if err != nil {
+		return err
+	}
 
 	client, err := streamline.NewClient(streamline.Config{
 		Brokers: []string{envOr("STREAMLINE_BOOTSTRAP_SERVERS", "localhost:9092")},
 		SASL: &streamline.SASLConfig{
 			Mechanism: "SCRAM-SHA-256",
-			Username:  envOr("SASL_USERNAME", "admin"),
-			Password:  envOr("SASL_PASSWORD", "admin-secret"),
+			Username:  username,
+			Password:  password,
 		},
 	})
 	if err != nil {
-		log.Fatalf("SCRAM connection failed: %v", err)
+		return fmt.Errorf("SCRAM connection failed: %w", err)
 	}
-	defer client.Close()
+	defer closeClient(client)
 
 	ctx := context.Background()
 	topics, err := client.Admin.ListTopics(ctx)
 	if err != nil {
-		log.Fatalf("List topics failed: %v", err)
+		return fmt.Errorf("list topics failed: %w", err)
 	}
 	fmt.Printf("  Connected with SCRAM-SHA-256. Topics: %v\n\n", topics)
+
+	return nil
 }
 
-func tlsExample() {
+func tlsExample() error {
 	fmt.Println("TLS Encrypted Connection")
 	fmt.Println("----------------------------------------")
 
 	client, err := streamline.NewClient(streamline.Config{
 		Brokers: []string{envOr("STREAMLINE_TLS_BOOTSTRAP", "localhost:9093")},
 		TLS: &streamline.TLSConfig{
-			CAPath:   envOr("CA_PATH", "certs/ca.pem"),
-			CertPath: os.Getenv("CLIENT_CERT_PATH"),
-			KeyPath:  os.Getenv("CLIENT_KEY_PATH"),
+			Enable:   true,
+			CAFile:   envOr("CA_PATH", "certs/ca.pem"),
+			CertFile: os.Getenv("CLIENT_CERT_PATH"),
+			KeyFile:  os.Getenv("CLIENT_KEY_PATH"),
 		},
 	})
 	if err != nil {
-		log.Fatalf("TLS connection failed: %v", err)
+		return fmt.Errorf("TLS connection failed: %w", err)
 	}
-	defer client.Close()
+	defer closeClient(client)
 
 	ctx := context.Background()
 	topics, err := client.Admin.ListTopics(ctx)
 	if err != nil {
-		log.Fatalf("List topics failed: %v", err)
+		return fmt.Errorf("list topics failed: %w", err)
 	}
 	fmt.Printf("  Connected with TLS. Topics: %v\n\n", topics)
+
+	return nil
+}
+
+// closeClient closes the client and reports a close failure without masking
+// the example's own result.
+func closeClient(client *streamline.Client) {
+	if err := client.Close(); err != nil {
+		log.Printf("Failed to close client: %v", err)
+	}
 }
 
 func envOr(key, fallback string) string {
@@ -106,19 +139,41 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
+func requiredEnv(key string) (string, error) {
+	value := os.Getenv(key)
+	if value == "" {
+		return "", fmt.Errorf("%s is required", key)
+	}
+	return value, nil
+}
+
 func main() {
+	if err := run(); err != nil {
+		log.Fatal(err)
+	}
+}
+
+// run holds the example body so deferred cleanup still runs when it fails:
+// log.Fatal in main would skip every pending defer.
+func run() error {
 	fmt.Println("Streamline Security Examples")
 	fmt.Println("========================================")
 	fmt.Println()
 
+	var err error
 	switch envOr("SECURITY_MODE", "sasl_plain") {
 	case "scram":
-		scramExample()
+		err = scramExample()
 	case "tls":
-		tlsExample()
+		err = tlsExample()
 	default:
-		saslPlainExample()
+		err = saslPlainExample()
+	}
+	if err != nil {
+		return err
 	}
 
 	fmt.Println("Done!")
+
+	return nil
 }
